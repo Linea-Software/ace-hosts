@@ -15,14 +15,14 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: System :: Networking",
 ]
-# Direct dependencies are pinned exactly (no floating ranges) so the project
-# is reproducible even outside the uv.lock. Transitive dependencies are
-# resolved and locked deterministically in uv.lock.
+# Direct dependencies are pinned exactly to the latest available versions
+# as of 2026-08-22 (resolved with `uv add`; re-run it to refresh). Transitive
+# dependencies are resolved and locked deterministically in uv.lock.
 dependencies = [
-    "httpx==0.25.0",
-    "python-dotenv==1.0.0",
-    "requests==2.31.0",
-    "tqdm==4.66.1",
+    "httpx==0.28.1",
+    "python-dotenv==1.2.3",
+    "requests==2.34.2",
+    "tqdm==4.70.0",
 ]
 
 [project.scripts]
@@ -31,7 +31,10 @@ ace-hosts-merge = "scripts.merge_hosts:main"
 ace-hosts-split = "scripts.split_hosts:main"
 
 [dependency-groups]
-dev = ["basedpyright==1.39.10", "pytest==9.1.1"]
+dev = [
+    "basedpyright==1.39.10",
+    "pytest==9.1.1",
+]
 
 [tool.basedpyright]
 # This codebase is CLI-heavy: argparse registration uses expression statements

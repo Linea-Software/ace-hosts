@@ -51,11 +51,11 @@ or directly as a system `hosts` file.
 uv init ace-hosts
 cd ace-hosts
 
-# Add dependencies with explicit versions
-uv add requests==2.31.0
-uv add httpx==0.25.0
-uv add tqdm==4.66.1
-uv add python-dotenv==1.0.0
+# Add dependencies with explicit versions (latest as of 2026-08-22)
+uv add requests==2.34.2
+uv add httpx==0.28.1
+uv add tqdm==4.70.0
+uv add python-dotenv==1.2.3
 
 # Create the environment and install the project + dev dependencies
 uv sync

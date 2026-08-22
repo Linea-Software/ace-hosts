@@ -17,9 +17,7 @@ import logging
 import re
 import sys
 import time
-from collections.abc import Iterator
 from pathlib import Path
-from typing import cast
 
 import requests
 from tqdm import tqdm
@@ -108,10 +106,7 @@ def download_source(
                     leave=False,
                 ) as progress:
                     with dest.open("wb") as handle:
-                        # requests' stubs type iter_content as Iterator[Any];
-                        # it actually yields raw bytes.
-                        content = cast(Iterator[bytes], response.iter_content(chunk_size=CHUNK_SIZE))
-                        for chunk in content:
+                        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                             if not chunk:
                                 continue
                             handle.write(chunk)
