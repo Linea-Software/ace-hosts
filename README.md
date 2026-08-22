@@ -173,9 +173,12 @@ Copy `.env.example` to `.env` and adjust. All keys are optional.
 
 The built-in list mirrors the sources used by the original
 [`columndeeply/hosts`](https://github.com/columndeeply/hosts) repo
-(StevenBlack, blocklistproject, ...). Several original sources (cbuijs,
-RPiList, Sinfonietta, purify) returned 404 and were pruned on 2026-08-22.
-Set `SOURCES` in `.env` (or pass `--sources`) to customize:
+(StevenBlack, blocklistproject, ...). Sources that returned 404 were pruned
+on 2026-08-22 (cbuijs/shallalist, RPiList, Sinfonietta, purify). Candidates
+rejected the same day: Bon-Appetit/porn-domains (CC BY-SA 4.0 — share-alike
+conflicts with this project's MIT license), cbuijs/accomplist (no license),
+Hagezi nsfw lists and zachlagden nsfw lists (404). Set `SOURCES` in `.env`
+(or pass `--sources`) to customize:
 
 | Name | URL |
 | --- | --- |
@@ -184,6 +187,8 @@ Set `SOURCES` in `.env` (or pass `--sources`) to customize:
 | 4skinskywalker | https://raw.githubusercontent.com/4skinSkywalker/Anti-Porn-HOSTS-File/master/HOSTS.txt |
 | tiuxo-porn | https://raw.githubusercontent.com/tiuxo/hosts/master/porn |
 | saskuu-porno | https://raw.githubusercontent.com/saskuu/blocklist/main/porno.txt |
+| stbanmc-porn | https://raw.githubusercontent.com/StbanMc/CommunityBlocklists/main/exports/domains/porn.txt (MIT, ~1.1M domains) |
+| zangadoprojets-porn | https://raw.githubusercontent.com/zangadoprojets/pi-hole-blocklist/main/Pornpages.txt (MIT, ~2.07M domains, last file update 2022) |
 
 Sources go stale — the downloader skips failures gracefully, and PRs updating
 this table are welcome.

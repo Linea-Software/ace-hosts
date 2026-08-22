@@ -42,6 +42,8 @@ DEFAULT_SOURCES: dict[str, str] = {
     "4skinskywalker": "https://raw.githubusercontent.com/4skinSkywalker/Anti-Porn-HOSTS-File/master/HOSTS.txt",
     "tiuxo-porn": "https://raw.githubusercontent.com/tiuxo/hosts/master/porn",
     "saskuu-porno": "https://raw.githubusercontent.com/saskuu/blocklist/main/porno.txt",
+    "stbanmc-porn": "https://raw.githubusercontent.com/StbanMc/CommunityBlocklists/main/exports/domains/porn.txt",
+    "zangadoprojets-porn": "https://raw.githubusercontent.com/zangadoprojets/pi-hole-blocklist/main/Pornpages.txt",
 }
 
 CHUNK_SIZE = 64 * 1024
