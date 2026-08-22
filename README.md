@@ -189,6 +189,7 @@ Hagezi nsfw lists and zachlagden nsfw lists (404). Set `SOURCES` in `.env`
 | saskuu-porno | https://raw.githubusercontent.com/saskuu/blocklist/main/porno.txt |
 | stbanmc-porn | https://raw.githubusercontent.com/StbanMc/CommunityBlocklists/main/exports/domains/porn.txt (MIT, ~1.1M domains) |
 | zangadoprojets-porn | https://raw.githubusercontent.com/zangadoprojets/pi-hole-blocklist/main/Pornpages.txt (MIT, ~2.07M domains, last file update 2022) |
+| hagezi-nsfw | https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/nsfw-onlydomains.txt (GPL-3.0, ~114K domains, updated daily) |
 
 Sources go stale — the downloader skips failures gracefully, and PRs updating
 this table are welcome.
