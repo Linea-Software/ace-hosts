@@ -173,20 +173,17 @@ Copy `.env.example` to `.env` and adjust. All keys are optional.
 
 The built-in list mirrors the sources used by the original
 [`columndeeply/hosts`](https://github.com/columndeeply/hosts) repo
-(StevenBlack, blocklistproject, cbuijs, RPiList, ...). Set `SOURCES` in `.env`
-(or pass `--sources`) to customize:
+(StevenBlack, blocklistproject, ...). Several original sources (cbuijs,
+RPiList, Sinfonietta, purify) returned 404 and were pruned on 2026-08-22.
+Set `SOURCES` in `.env` (or pass `--sources`) to customize:
 
 | Name | URL |
 | --- | --- |
 | stevenblack | https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts |
 | blocklistproject-porn | https://raw.githubusercontent.com/blocklistproject/Lists/master/porn.txt |
-| cbuijs-porn | https://raw.githubusercontent.com/cbuijs/shallalist/master/porn/domains |
 | 4skinskywalker | https://raw.githubusercontent.com/4skinSkywalker/Anti-Porn-HOSTS-File/master/HOSTS.txt |
-| rplist-porn | https://raw.githubusercontent.com/RPiList/specials/master/BlocklistLists/Porn.txt |
-| sinfonietta-porn | https://raw.githubusercontent.com/Sinfonietta/hostfiles/master/porn-hosts |
 | tiuxo-porn | https://raw.githubusercontent.com/tiuxo/hosts/master/porn |
 | saskuu-porno | https://raw.githubusercontent.com/saskuu/blocklist/main/porno.txt |
-| purify-porn | https://raw.githubusercontent.com/CyberPurifyAI/purify/main/Filters/filter/porn/m.txt |
 
 Sources go stale — the downloader skips failures gracefully, and PRs updating
 this table are welcome.

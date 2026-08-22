@@ -39,13 +39,9 @@ logger = logging.getLogger("ace-hosts.download")
 DEFAULT_SOURCES: dict[str, str] = {
     "stevenblack": "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
     "blocklistproject-porn": "https://raw.githubusercontent.com/blocklistproject/Lists/master/porn.txt",
-    "cbuijs-porn": "https://raw.githubusercontent.com/cbuijs/shallalist/master/porn/domains",
     "4skinskywalker": "https://raw.githubusercontent.com/4skinSkywalker/Anti-Porn-HOSTS-File/master/HOSTS.txt",
-    "rplist-porn": "https://raw.githubusercontent.com/RPiList/specials/master/BlocklistLists/Porn.txt",
-    "sinfonietta-porn": "https://raw.githubusercontent.com/Sinfonietta/hostfiles/master/porn-hosts",
     "tiuxo-porn": "https://raw.githubusercontent.com/tiuxo/hosts/master/porn",
     "saskuu-porno": "https://raw.githubusercontent.com/saskuu/blocklist/main/porno.txt",
-    "purify-porn": "https://raw.githubusercontent.com/CyberPurifyAI/purify/main/Filters/filter/porn/m.txt",
 }
 
 CHUNK_SIZE = 64 * 1024
