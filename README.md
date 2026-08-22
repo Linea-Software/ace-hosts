@@ -44,30 +44,25 @@ or directly as a system `hosts` file.
 - [uv](https://docs.astral.sh/uv/) (0.4+; developed against 0.11)
 - Python 3.10+
 
-## Installation
+## Setup
 
 ```bash
-# Initialize the project (uv-managed)
-uv init ace-hosts
-cd ace-hosts
-
-# Add dependencies with explicit versions (latest as of 2026-08-22)
-uv add requests==2.34.2
-uv add httpx==0.28.1
-uv add tqdm==4.70.0
-uv add python-dotenv==1.2.3
-
-# Create the environment and install the project + dev dependencies
+git clone https://github.com/Linea-Software/ace-hosts
 uv sync
-
-# Alternatively, install it into any environment (classic editable install)
-uv pip install -e .
 ```
 
-`uv sync` reads `pyproject.toml` and `uv.lock`, creates `.venv/`, and installs
-the project plus its console scripts (`ace-hosts-download`, `ace-hosts-merge`,
-`ace-hosts-split`). The lockfile is committed, so every contributor gets the
-exact same dependency set.
+That's it. `uv sync` reads `pyproject.toml` and the committed `uv.lock`,
+creates `.venv/`, and installs the project as an editable package — including
+its console scripts (`ace-hosts-download`, `ace-hosts-merge`,
+`ace-hosts-split`) — plus the `dev` group (pytest, basedpyright) by default.
+Since the lockfile is committed, every contributor gets the exact same
+dependency set. `uv run` syncs the environment automatically, so it can also
+be used directly without a prior `uv sync`.
+
+Dependencies are pinned exactly in `pyproject.toml` and resolved
+deterministically in `uv.lock`. `uv add` is only needed by maintainers when
+*changing* dependencies (e.g. `uv add requests` to refresh a pin) — anyone
+cloning the repository just runs `uv sync`.
 
 ## Quick start
 
@@ -234,8 +229,9 @@ trigger; see `.github/workflows/ci.yml` for the test side.
 ## Development
 
 ```bash
-uv sync --dev     # install including dev dependencies
-uv run pytest     # run the test suite
+uv sync              # install including dev dependencies (default)
+uv run pytest        # run the test suite
+uv run basedpyright  # type check (must stay at 0 errors / 0 warnings)
 ```
 
 The tests cover format parsing, whitelist filtering, deduplication and the

@@ -16,7 +16,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --locked
 
       - name: Syntax check
         run: uv run python -m compileall -q scripts tests
