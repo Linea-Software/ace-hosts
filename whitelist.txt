@@ -1,0 +1,12 @@
+# ace-hosts whitelist
+# ──────────────────────────────────────────────────────────────────────
+# Domains listed here (one per line) are removed from the merged list.
+# Lines starting with '#' are ignored, as are comments after a '#'.
+#
+# The original columndeeply/hosts repo kept a whitelist/ directory for the
+# same purpose: domains that were blocklisted by a source but should not be.
+# Only whitelist domains that are genuinely safe — do not whitelist dead
+# domains, they may come back.
+#
+# Example:
+# example.com

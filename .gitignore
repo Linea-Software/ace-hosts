@@ -1,0 +1,33 @@
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# ── Virtual environments ──────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Tooling / test artifacts ──────────────────────────────────────────
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── Environment ───────────────────────────────────────────────────────
+# Local configuration (copy .env.example → .env). Never commit secrets.
+.env
+.env.*
+!.env.example
+
+# ── Generated data ────────────────────────────────────────────────────
+# Raw downloads and merged output are generated at build time.
+downloads/
+hosts/*
+!hosts/.gitkeep
+.tmp-out/
+*.tmp

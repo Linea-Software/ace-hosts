@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Syntax check
+        run: uv run python -m compileall -q scripts tests
+
+      - name: Type check
+        run: uv run basedpyright
+
+      - name: Run tests
+        run: uv run pytest
+
+      - name: Smoke test (merge + split)
+        run: |
+          mkdir -p .tmp-sources .tmp-out
+          printf '0.0.0.0 alpha.example.com\n127.0.0.1 beta.example.org # inline comment\nbeta.example.org\n' > .tmp-sources/one.txt
+          printf 'alpha.example.com\n||gamma.example.net^\n*.delta.example.io\n' > .tmp-sources/two.txt
+          uv run python scripts/merge_hosts.py --input .tmp-sources/one.txt --input .tmp-sources/two.txt --output .tmp-out/merged.txt --split --split-mb 1
+          ls -la .tmp-out/
+          uv run python scripts/split_hosts.py --input .tmp-out/merged.txt --output-dir .tmp-out --max-mb 1 --check
