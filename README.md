@@ -1,10 +1,15 @@
 # ace-hosts
 
+> **Disclaimer:** This repository — including all scripts, tests, and
+documentation — was fully developed by AI language models (LLMs). It has
+been reviewed and verified with automated tests and a type checker, but it
+should be treated accordingly. Please report any issues you find.
+
 **Download, merge, deduplicate and split host lists for DNS-based blocking.**
 
 `ace-hosts` is an automated Python pipeline that produces a unified, cleaned
-blocklist from many upstream sources — the same approach as the archived
-[`columndeeply/hosts`](https://web.archive.org/web/20260217031549/https://github.com/columndeeply/hosts)
+blocklist from many upstream sources — the same approach as the now deleted
+[`columndeeply/hosts`](https://github.com/columndeeply/hosts)
 repository (a merged adult-content blocklist of more than 10 million domains,
 split into 90 MB GitHub-friendly chunks named `hosts00`, `hosts01`, ...).
 
