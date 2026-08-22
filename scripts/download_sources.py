@@ -45,6 +45,9 @@ DEFAULT_SOURCES: dict[str, str] = {
     "stbanmc-porn": "https://raw.githubusercontent.com/StbanMc/CommunityBlocklists/main/exports/domains/porn.txt",
     "zangadoprojets-porn": "https://raw.githubusercontent.com/zangadoprojets/pi-hole-blocklist/main/Pornpages.txt",
     "hagezi-nsfw": "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/nsfw-onlydomains.txt",
+    "sinfonietta-porn": "https://raw.githubusercontent.com/Sinfonietta/hostfiles/master/pornography-hosts",
+    "chadmayfield-porn": "https://raw.githubusercontent.com/chadmayfield/my-pihole-blocklists/master/lists/pi_blocklist_porn_all.list",
+    "energized-porn": "https://raw.githubusercontent.com/EnergizedProtection/EnergizedHosts/master/EnergizedPorn/energized/EnergizedPorn-domains.txt",
 }
 
 CHUNK_SIZE = 64 * 1024

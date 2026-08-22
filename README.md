@@ -174,11 +174,14 @@ Copy `.env.example` to `.env` and adjust. All keys are optional.
 The built-in list mirrors the sources used by the original
 [`columndeeply/hosts`](https://github.com/columndeeply/hosts) repo
 (StevenBlack, blocklistproject, ...). Sources that returned 404 were pruned
-on 2026-08-22 (cbuijs/shallalist, RPiList, Sinfonietta, purify). Candidates
-rejected the same day: Bon-Appetit/porn-domains (CC BY-SA 4.0 — share-alike
+on 2026-08-22 (cbuijs/shallalist, RPiList, purify, mypdns, mhxion, 11201010,
+sibaspage). Sinfonietta was initially pruned as a 404 but restored the same
+day — the correct filename is `pornography-hosts`, not `porn-hosts`.
+Rejected candidates: Bon-Appetit/porn-domains (CC BY-SA 4.0 — share-alike
 conflicts with this project's MIT license), cbuijs/accomplist (no license),
-Hagezi nsfw lists and zachlagden nsfw lists (404). Set `SOURCES` in `.env`
-(or pass `--sources`) to customize:
+mhhakim/pihole-blocklist (no license), mrvivacious PorNo (Fair Source
+License, 1-user limit), Hagezi/zachlagden nsfw raw URLs (404). Set `SOURCES`
+in `.env` (or pass `--sources`) to customize:
 
 | Name | URL |
 | --- | --- |
@@ -190,6 +193,9 @@ Hagezi nsfw lists and zachlagden nsfw lists (404). Set `SOURCES` in `.env`
 | stbanmc-porn | https://raw.githubusercontent.com/StbanMc/CommunityBlocklists/main/exports/domains/porn.txt (MIT, ~1.1M domains) |
 | zangadoprojets-porn | https://raw.githubusercontent.com/zangadoprojets/pi-hole-blocklist/main/Pornpages.txt (MIT, ~2.07M domains, last file update 2022) |
 | hagezi-nsfw | https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/nsfw-onlydomains.txt (GPL-3.0, ~114K domains, updated daily) |
+| sinfonietta-porn | https://raw.githubusercontent.com/Sinfonietta/hostfiles/master/pornography-hosts (MIT, ~1.5 MB) |
+| chadmayfield-porn | https://raw.githubusercontent.com/chadmayfield/my-pihole-blocklists/master/lists/pi_blocklist_porn_all.list (GPL-3.0, ~50 MB, last update 2021) |
+| energized-porn | https://raw.githubusercontent.com/EnergizedProtection/EnergizedHosts/master/EnergizedPorn/energized/EnergizedPorn-domains.txt (MIT, ~6.5 MB) |
 
 Sources go stale — the downloader skips failures gracefully, and PRs updating
 this table are welcome.
