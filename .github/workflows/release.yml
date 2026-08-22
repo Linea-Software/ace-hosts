@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  schedule:
+    # First day of every month at 03:00 UTC.
+    - cron: "0 3 1 * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+# Never run two builds concurrently (monthly cron vs manual trigger).
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Download sources
+        run: uv run python scripts/download_sources.py --no-rate-limit
+
+      - name: Clean output
+        run: rm -f hosts/hosts* hosts/merged_hosts.txt hosts/SHA256SUMS
+
+      - name: Merge and split
+        run: uv run python scripts/merge_hosts.py --split
+
+      - name: Generate checksums
+        working-directory: hosts
+        run: sha256sum hosts* merged_hosts.txt > SHA256SUMS
+
+      - name: Build release notes
+        run: |
+          entries=$(grep -m1 '^# Entries:' hosts/merged_hosts.txt | awk '{print $3}')
+          generated=$(grep -m1 '^# Generated:' hosts/merged_hosts.txt | awk '{print $3}')
+          cat > /tmp/release-body.md <<EOF
+          Automated monthly build of the merged adult-content blocklist.
+
+          - Generated: ${generated}
+          - Unique domains: ${entries}
+          - Assets: hosts00..hostsNN (each ≤ 90 MiB), merged_hosts.txt (single file), SHA256SUMS
+
+          Sources: see https://github.com/Linea-Software/ace-hosts#default-sources
+          EOF
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$(date -u +%Y.%m.%d)"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag exists, replacing it"
+            gh release delete "$tag" --yes --cleanup-tag
+          fi
+          gh release create "$tag" \
+            --title "Host lists $(date -u +%Y-%m-%d)" \
+            --notes-file /tmp/release-body.md \
+            hosts/hosts* hosts/merged_hosts.txt hosts/SHA256SUMS

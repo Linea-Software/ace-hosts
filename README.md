@@ -9,9 +9,7 @@ should be treated accordingly. Please report any issues you find.
 
 `ace-hosts` is an automated Python pipeline that produces a unified, cleaned
 blocklist from many upstream sources — the same approach as the now deleted
-[`columndeeply/hosts`](https://github.com/columndeeply/hosts)
-repository (a merged adult-content blocklist of more than 10 million domains,
-split into 90 MB GitHub-friendly chunks named `hosts00`, `hosts01`, ...).
+[`columndeeply/hosts`](https://github.com/columndeeply/hosts).
 
 Instead of shell scripts, this project uses three small Python scripts with
 logging, retries, progress bars and atomic writes:
@@ -205,11 +203,12 @@ this table are welcome.
 ### Pi-hole / AdGuard Home / Technitium DNS
 
 Add each chunk as a blocklist (the header comment on every chunk makes it
-valid standalone):
+valid standalone). These URLs are stable and always point to the latest
+release:
 
 ```
-https://raw.githubusercontent.com/<you>/ace-hosts/main/hosts00
-https://raw.githubusercontent.com/<you>/ace-hosts/main/hosts01
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/hosts00
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/hosts01
 ...
 ```
 
@@ -224,16 +223,21 @@ https://raw.githubusercontent.com/<you>/ace-hosts/main/hosts01
 
 ## Updating
 
-Run the pipeline on a schedule (e.g. monthly, like the original repo):
+The repository is rebuilt automatically on the **1st of every month (03:00
+UTC)** by the `Release` workflow (`.github/workflows/release.yml`): it
+downloads the sources, merges, splits and publishes the chunks plus
+`merged_hosts.txt` and a `SHA256SUMS` checksum file as release assets under
+a `vYYYY.MM.DD` tag. To trigger a build outside the schedule:
+
+- **GitHub UI:** Actions → *Release* → *Run workflow*
+- **CLI:** `gh workflow run release.yml`
+
+Run the pipeline locally at any time:
 
 ```bash
 uv run python scripts/download_sources.py
 uv run python scripts/merge_hosts.py --split
 ```
-
-Then commit `hosts/hosts*` (or attach `merged_hosts.txt` to a release) and
-bump the version tag. A GitHub Actions workflow can automate this with a cron
-trigger; see `.github/workflows/ci.yml` for the test side.
 
 ## Development
 
