@@ -5,11 +5,14 @@ documentation — was fully developed by AI language models (LLMs). It has
 been reviewed and verified with automated tests and a type checker, but it
 should be treated accordingly. Please report any issues you find.
 
-**Download, merge, deduplicate and split host lists for DNS-based blocking.**
+**A unified pornography blocklist — 3M+ adult domains, rebuilt monthly.**
 
-`ace-hosts` is an automated Python pipeline that produces a unified, cleaned
-blocklist from many upstream sources — the same approach as the now deleted
-[`columndeeply/hosts`](https://github.com/columndeeply/hosts).
+`ace-hosts` is an automated Python pipeline that downloads, merges and
+deduplicates **adult-content (pornography) blocklists** from many upstream
+sources, and publishes the result as GitHub-friendly hosts files — the same
+approach as the now deleted
+[`columndeeply/hosts`](https://github.com/columndeeply/hosts) repository (a
+unified porn blocklist of more than 10 million domains).
 
 Instead of shell scripts, this project uses three small Python scripts with
 logging, retries, progress bars and atomic writes:
@@ -20,8 +23,9 @@ logging, retries, progress bars and atomic writes:
 | `scripts/merge_hosts.py` | `cleanup.sh` + `merger.sh` | Cleans each list (comments, whitespace, IP normalization), merges, deduplicates, applies the whitelist, sorts, and optionally splits |
 | `scripts/split_hosts.py` | (split step of `merger.sh`) | Splits the merged file into `<90 MB` chunks named `hosts00`, `hosts01`, ... |
 
-The output works with Pi-hole, AdGuard Home, Technitium DNS, DNS66, Daedalus,
-or directly as a system `hosts` file.
+The output — `hosts00`, `hosts01`, ... — **blocks adult/pornographic
+websites** and works with Pi-hole, AdGuard Home, Technitium DNS, DNS66,
+Daedalus, or directly as a system `hosts` file.
 
 ## Features
 
@@ -171,7 +175,8 @@ Copy `.env.example` to `.env` and adjust. All keys are optional.
 
 The built-in list mirrors the sources used by the original
 [`columndeeply/hosts`](https://github.com/columndeeply/hosts) repo
-(StevenBlack, blocklistproject, ...). Sources that returned 404 were pruned
+(StevenBlack, blocklistproject, ...) — all of them adult-content /
+pornography blocklists. Sources that returned 404 were pruned
 on 2026-08-22 (cbuijs/shallalist, RPiList, purify, mypdns, mhxion, 11201010,
 sibaspage). Sinfonietta was initially pruned as a 404 but restored the same
 day — the correct filename is `pornography-hosts`, not `porn-hosts`.
@@ -199,6 +204,9 @@ Sources go stale — the downloader skips failures gracefully, and PRs updating
 this table are welcome.
 
 ## Using the output
+
+The generated lists block access to adult/pornographic content at the DNS
+level — they can be used as a parental-control or personal blocklist.
 
 ### Pi-hole / AdGuard Home / Technitium DNS
 
