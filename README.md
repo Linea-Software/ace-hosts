@@ -234,8 +234,8 @@ https://github.com/Linea-Software/ace-hosts/releases/latest/download/hosts01
 The repository is rebuilt automatically on the **1st of every month (03:00
 UTC)** by the `Release` workflow (`.github/workflows/release.yml`): it
 downloads the sources, merges, splits and publishes the chunks plus
-`merged_hosts.txt` and a `SHA256SUMS` checksum file as release assets under
-a `vYYYY.MM.DD` tag. To trigger a build outside the schedule:
+`merged_hosts.txt` and a `sha256_checksums.txt` checksum file as release
+assets under a `vYYYY.MM.DD` tag. To trigger a build outside the schedule:
 
 - **GitHub UI:** Actions → *Release* → *Run workflow*
 - **CLI:** `gh workflow run release.yml`

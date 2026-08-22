@@ -32,14 +32,14 @@ jobs:
         run: uv run python scripts/download_sources.py --no-rate-limit
 
       - name: Clean output
-        run: rm -f hosts/hosts* hosts/merged_hosts.txt hosts/SHA256SUMS
+        run: rm -f hosts/hosts* hosts/merged_hosts.txt hosts/sha256_checksums.txt
 
       - name: Merge and split
         run: uv run python scripts/merge_hosts.py --split
 
       - name: Generate checksums
         working-directory: hosts
-        run: sha256sum hosts* merged_hosts.txt > SHA256SUMS
+        run: sha256sum hosts* merged_hosts.txt > sha256_checksums.txt
 
       - name: Build release notes
         run: |
@@ -50,7 +50,7 @@ jobs:
 
           - Generated: ${generated}
           - Unique domains: ${entries}
-          - Assets: hosts00..hostsNN (each ≤ 90 MiB), merged_hosts.txt (single file), SHA256SUMS
+          - Assets: hosts00..hostsNN (each ≤ 90 MiB), merged_hosts.txt (single file), sha256_checksums.txt
 
           Sources: see https://github.com/Linea-Software/ace-hosts#default-sources
           EOF
@@ -67,4 +67,4 @@ jobs:
           gh release create "$tag" \
             --title "Host lists $(date -u +%Y-%m-%d)" \
             --notes-file /tmp/release-body.md \
-            hosts/hosts* hosts/merged_hosts.txt hosts/SHA256SUMS
+            hosts/hosts* hosts/merged_hosts.txt hosts/sha256_checksums.txt
