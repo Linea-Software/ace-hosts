@@ -9,7 +9,6 @@ on:
 permissions:
   contents: write
 
-# Never run two builds concurrently (monthly cron vs manual trigger).
 concurrency:
   group: release
   cancel-in-progress: false
@@ -29,30 +28,49 @@ jobs:
         run: uv sync --locked
 
       - name: Download sources
-        run: uv run python scripts/download_sources.py --no-rate-limit
+        run: uv run python scripts/download_sources.py --all-categories --no-rate-limit
 
       - name: Clean output
-        run: rm -f hosts/hosts* hosts/merged_hosts.txt hosts/sha256_checksums.txt
+        run: rm -f hosts/*
 
       - name: Merge and split
-        run: uv run python scripts/merge_hosts.py --split
+        run: uv run python scripts/merge_hosts.py --all-categories --split --no-progress
 
       - name: Generate checksums
         working-directory: hosts
-        run: sha256sum hosts* merged_hosts.txt > sha256_checksums.txt
+        run: sha256sum * > sha256_checksums.txt
 
       - name: Build release notes
         run: |
-          entries=$(grep -m1 '^# Entries:' hosts/merged_hosts.txt | awk '{print $3}')
           generated=$(grep -m1 '^# Generated:' hosts/merged_hosts.txt | awk '{print $3}')
           cat > /tmp/release-body.md <<EOF
-          Automated monthly build of the merged adult-content blocklist.
+          Automated monthly build of the Ace category blocklists.
 
           - Generated: ${generated}
-          - Unique domains: ${entries}
-          - Assets: hosts00..hostsNN (each ≤ 90 MiB), merged_hosts.txt (single file), sha256_checksums.txt
+          - Adult compatibility assets: merged_hosts.txt and hosts00..hostsNN
+          - Other categories: <category>.txt and <category>-hosts00..NN
 
-          Sources: see https://github.com/Linea-Software/ace-hosts#default-sources
+          Unique domains by category:
+          EOF
+
+          for entry in \
+            "adult:hosts/merged_hosts.txt" \
+            "gaming:hosts/gaming.txt" \
+            "social:hosts/social.txt" \
+            "gambling:hosts/gambling.txt" \
+            "streaming:hosts/streaming.txt" \
+            "dating:hosts/dating.txt" \
+            "shopping:hosts/shopping.txt"; do
+            category="${entry%%:*}"
+            file="${entry#*:}"
+            count=$(grep -m1 '^# Entries:' "$file" | awk '{print $3}')
+            echo "- ${category}: ${count}" >> /tmp/release-body.md
+          done
+
+          cat >> /tmp/release-body.md <<EOF
+
+          Each generated file records its upstream source names and license labels.
+          Source details: https://github.com/Linea-Software/ace-hosts#built-in-categories-and-sources
           EOF
 
       - name: Publish release
@@ -67,4 +85,4 @@ jobs:
           gh release create "$tag" \
             --title "Host lists $(date -u +%Y-%m-%d)" \
             --notes-file /tmp/release-body.md \
-            hosts/hosts* hosts/merged_hosts.txt hosts/sha256_checksums.txt
+            hosts/*

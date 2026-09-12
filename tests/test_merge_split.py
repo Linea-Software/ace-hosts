@@ -1,16 +1,13 @@
-"""End-to-end tests for the merge → split pipeline.
-
-Uses synthetic sources (all hosts/adblock/plain-domain formats) and a tiny
-chunk size so the splitting logic is exercised without large fixtures.
-"""
+"""End-to-end tests for the merge -> split pipeline."""
 
 from pathlib import Path
 
-from scripts import merge_hosts, split_hosts, utils
+from scripts import merge_hosts, source_catalog, split_hosts, utils
 
 
 def _write(tmp_path: Path, name: str, content: str) -> Path:
     path = tmp_path / name
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path
 
@@ -32,13 +29,10 @@ def test_merge_files_dedupes_normalizes_and_filters_whitelist(tmp_path: Path):
     whitelist_domains = merge_hosts.load_whitelist(whitelist)
     domains, stats = merge_hosts.merge_files([source_a, source_b, source_c], whitelist_domains, dedupe=True)
 
-    # alpha duplicated across a/b; beta normalized then whitelisted;
-    # localhost reserved; gamma/delta/epsilon unique. (merge_files does not
-    # sort — sorting happens in main() — so compare sorted.)
     assert sorted(domains) == sorted(
         ["alpha.example.com", "delta.example.com", "gamma.example.net", "epsilon.example.io"]
     )
-    assert stats["raw_domains"] == 7  # localhost is dropped as reserved
+    assert stats["raw_domains"] == 7
     assert stats["whitelisted"] == 1
     assert stats["unique"] == 4
 
@@ -50,6 +44,28 @@ def test_merge_files_without_dedupe_keeps_duplicates(tmp_path: Path):
     assert stats["unique"] == 1
 
 
+def test_category_manifest_prevents_stale_downloads_from_being_merged(tmp_path: Path):
+    downloads = tmp_path / "downloads"
+    category_dir = downloads / "gaming"
+    current = _write(category_dir, "current.txt", "current.example\n")
+    _write(category_dir, "stale.txt", "stale.example\n")
+    _write(category_dir, source_catalog.DOWNLOAD_MANIFEST, "current.txt\n")
+    config = dict(utils.DEFAULTS)
+    config["DOWNLOAD_DIR"] = str(downloads)
+
+    files = merge_hosts.resolve_input_files([], config, "gaming")
+    assert files == [current]
+
+
+def test_default_category_output_names_preserve_adult_compatibility(tmp_path: Path):
+    config = dict(utils.DEFAULTS)
+    config["OUTPUT_DIR"] = str(tmp_path)
+    assert merge_hosts.default_output_path("adult", config) == tmp_path / "merged_hosts.txt"
+    assert merge_hosts.default_split_prefix("adult", config) == "hosts"
+    assert merge_hosts.default_output_path("gaming", config) == tmp_path / "gaming.txt"
+    assert merge_hosts.default_split_prefix("gaming", config) == "gaming-hosts"
+
+
 def test_split_file_produces_small_sequential_chunks(tmp_path: Path):
     domains = [f"{i:04d}.example.com" for i in range(40)]
     merged = _write(
@@ -58,22 +74,15 @@ def test_split_file_produces_small_sequential_chunks(tmp_path: Path):
         "\n".join(["# Title: test", "# Entries: 40", *[f"127.0.0.1 {domain}" for domain in domains]]) + "\n",
     )
 
-    max_mb = 0.0005  # ~524 bytes → forces several chunks
+    max_mb = 0.0005
     chunks = split_hosts.split_file(merged, tmp_path / "out", max_mb=max_mb, prefix="hosts", show_progress=False)
 
     assert len(chunks) > 1
-    # Regression guard: chunks must be packed near the size limit, not one
-    # line per chunk. 40 lines x ~30 B + header ~= 1.2 KB / 524 B → 2-3
-    # chunks. (A missing current_size reset produced 40+ chunks.)
     assert len(chunks) <= 5
-    # Sequential naming with zero padding (hosts00, hosts01, ...).
     assert [chunk.name for chunk in chunks] == [f"hosts{index:02d}" for index in range(len(chunks))]
-
     for chunk in chunks:
         assert chunk.stat().st_size <= int(max_mb * 1024 * 1024), f"{chunk.name} exceeds chunk size"
 
-    # Reconstructing the chunk payloads must reproduce the merged file
-    # exactly (header comments repeat on every chunk).
     expected_payload = [line for line in merged.read_text().splitlines() if not line.startswith("#")]
     actual_payload: list[str] = []
     for chunk in chunks:
@@ -81,6 +90,29 @@ def test_split_file_produces_small_sequential_chunks(tmp_path: Path):
             if not line.startswith("#"):
                 actual_payload.append(line)
     assert actual_payload == expected_payload
+
+
+def test_split_file_removes_stale_old_chunks_only(tmp_path: Path):
+    merged = _write(tmp_path, "merged.txt", "127.0.0.1 example.com\n")
+    out_dir = tmp_path / "out"
+    _write(out_dir, "hosts00", "old\n")
+    _write(out_dir, "hosts01", "old\n")
+    _write(out_dir, "hosts99", "old\n")
+    unrelated = _write(out_dir, "hosts-not-a-chunk", "keep\n")
+
+    chunks = split_hosts.split_file(merged, out_dir, max_mb=1, prefix="hosts", show_progress=False)
+
+    assert [chunk.name for chunk in chunks] == ["hosts00"]
+    assert not (out_dir / "hosts01").exists()
+    assert not (out_dir / "hosts99").exists()
+    assert unrelated.is_file()
+
+
+def test_find_chunks_requires_numeric_suffix(tmp_path: Path):
+    _write(tmp_path, "hosts00", "a\n")
+    _write(tmp_path, "hosts01", "a\n")
+    _write(tmp_path, "hosts-checksum", "a\n")
+    assert [path.name for path in split_hosts.find_chunks(tmp_path, "hosts")] == ["hosts00", "hosts01"]
 
 
 def test_split_file_zero_padding_grows_beyond_two_digits(tmp_path: Path):
@@ -102,7 +134,6 @@ def test_split_file_missing_input_raises(tmp_path: Path):
 
 
 def test_full_pipeline_round_trip(tmp_path: Path):
-    """merge_hosts.main() with --split produces valid chunks from raw lists."""
     expected = [f"{index:03d}.example.com" for index in range(30)]
     _write(tmp_path, "raw-one.txt", "\n".join(f"0.0.0.0 {domain}" for domain in expected) + "\n")
     _write(tmp_path, "raw-two.txt", "\n".join(f"||{domain}^" for domain in expected) + "\n")
@@ -124,7 +155,7 @@ def test_full_pipeline_round_trip(tmp_path: Path):
     merged = out_dir / "merged.txt"
     assert merged.is_file()
 
-    chunks = sorted(out_dir.glob("hosts*"))
+    chunks = split_hosts.find_chunks(out_dir, "hosts")
     assert len(chunks) > 1
     assert all(chunk.stat().st_size <= 524 for chunk in chunks)
 
@@ -133,8 +164,6 @@ def test_full_pipeline_round_trip(tmp_path: Path):
 
 
 def test_merge_main_no_inputs_returns_error(tmp_path: Path):
-    # An explicit --input that matches nothing must fail fast (without it,
-    # auto-discovery would pick up any files in downloads/).
     assert (
         merge_hosts.main(
             ["--input", str(tmp_path / "does-not-exist-*.txt"), "--output", str(tmp_path / "out.txt"), "--no-progress"]

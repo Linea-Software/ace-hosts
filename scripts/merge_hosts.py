@@ -1,18 +1,4 @@
-"""Merge downloaded host lists into a single clean, deduplicated file.
-
-This combines the two maintenance scripts of the archived columndeeply/hosts
-repository:
-
-- ``cleanup.sh`` — remove empty lines, comments, multiple whitespaces, tabs
-  and trailing whitespace; normalize every line to ``127.0.0.1 <domain>``;
-  remove whitelisted domains; remove duplicates; sort.
-- ``merger.sh`` — merge clean lists with the main list, deduplicate, sort and
-  split the result into 90 MB chunks.
-
-Run this after ``download_sources.py`` (or point ``--input`` at any hosts /
-adblock / plain-domain lists). Use ``--split`` to also split the merged file
-into GitHub-friendly chunks.
-"""
+"""Merge downloaded host lists into clean category-specific blocklists."""
 
 from __future__ import annotations
 
@@ -26,28 +12,53 @@ from pathlib import Path
 from tqdm import tqdm
 
 if __package__ in (None, ""):
-    # Running directly as a script (python scripts/merge_hosts.py): make the
-    # project root importable so the package import below works in every
-    # execution mode (script, module, installed console script).
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts import split_hosts, utils
+from scripts import source_catalog, split_hosts, utils
 
 logger = logging.getLogger("ace-hosts.merge")
 
 
-def resolve_input_files(patterns: list[str], config: dict[str, str]) -> list[Path]:
-    """Determine the files to merge.
+def _configured_dir(value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else utils.PROJECT_ROOT / path
 
-    Priority: ``--input`` flags > ``INPUT_FILES`` env var > everything in the
-    download directory. Glob patterns are expanded (needed on Windows, where
-    the shell does not do it).
+
+def _manifest_inputs(category_dir: Path) -> list[str] | None:
+    manifest = category_dir / source_catalog.DOWNLOAD_MANIFEST
+    if not manifest.is_file():
+        return None
+    names = [line.strip() for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [str(category_dir / name) for name in names]
+
+
+def resolve_input_files(
+    patterns: list[str],
+    config: dict[str, str],
+    category: str = source_catalog.DEFAULT_CATEGORY,
+) -> list[Path]:
+    """Determine the files to merge for one category.
+
+    Priority: explicit ``--input`` > ``INPUT_FILES`` > the downloader manifest
+    for ``downloads/<category>`` > files in that category directory. For the
+    adult category only, a flat legacy ``downloads/*`` layout is accepted when
+    ``downloads/adult`` does not yet exist.
     """
     candidates = list(patterns)
     if not candidates and config.get("INPUT_FILES", "").strip():
         candidates = [entry.strip() for entry in config["INPUT_FILES"].split(",") if entry.strip()]
     if not candidates:
-        candidates = [str(utils.PROJECT_ROOT / config["DOWNLOAD_DIR"] / "*")]
+        download_dir = _configured_dir(config["DOWNLOAD_DIR"])
+        category_dir = download_dir / category
+        manifest_inputs = _manifest_inputs(category_dir)
+        if manifest_inputs is not None:
+            candidates = manifest_inputs
+        elif category_dir.is_dir():
+            candidates = [str(category_dir / "*")]
+        elif category == source_catalog.DEFAULT_CATEGORY:
+            candidates = [str(download_dir / "*")]
+        else:
+            candidates = [str(category_dir / "*")]
 
     files: list[Path] = []
     seen: set[Path] = set()
@@ -76,30 +87,60 @@ def merge_files(
     dedupe: bool = True,
     show_progress: bool = True,
 ) -> tuple[list[str], dict[str, int]]:
-    """Merge *files* into a list of unique, whitelist-filtered domains."""
-    stats: dict[str, int] = {"files": len(files), "raw_domains": 0, "whitelisted": 0, "unique": 0}
-    domains: set[str] = set()
-    ordered: list[str] = []
+    """Merge *files* into a whitelist-filtered domain list.
 
+    The default deduplicating path keeps only one set in memory. The explicit
+    ``--no-dedupe`` path keeps only the ordered list, avoiding the old behavior
+    that unnecessarily retained both representations simultaneously.
+    """
+    stats: dict[str, int] = {"files": len(files), "raw_domains": 0, "whitelisted": 0, "unique": 0}
+
+    if dedupe:
+        unique_domains: set[str] = set()
+        for path in tqdm(files, desc="merging sources", unit="file", disable=not show_progress):
+            count = 0
+            for domain in utils.iter_domains(path):
+                count += 1
+                unique_domains.add(domain)
+            stats["raw_domains"] += count
+            logger.info("  %s: %d domain(s)", path.name, count)
+
+        if whitelist_domains:
+            before = len(unique_domains)
+            unique_domains.difference_update(whitelist_domains)
+            stats["whitelisted"] = before - len(unique_domains)
+        stats["unique"] = len(unique_domains)
+        return list(unique_domains), stats
+
+    ordered: list[str] = []
     for path in tqdm(files, desc="merging sources", unit="file", disable=not show_progress):
         count = 0
         for domain in utils.iter_domains(path):
             count += 1
-            domains.add(domain)
-            if not dedupe:
-                ordered.append(domain)
+            ordered.append(domain)
         stats["raw_domains"] += count
         logger.info("  %s: %d domain(s)", path.name, count)
-
-    result = list(domains) if dedupe else ordered
-
     if whitelist_domains:
-        before = len(result)
-        result = [domain for domain in result if domain not in whitelist_domains]
-        stats["whitelisted"] = before - len(result)
+        before = len(ordered)
+        ordered = [domain for domain in ordered if domain not in whitelist_domains]
+        stats["whitelisted"] = before - len(ordered)
+    stats["unique"] = len(set(ordered))
+    return ordered, stats
 
-    stats["unique"] = len(set(result))
-    return result, stats
+
+def default_output_path(category: str, config: dict[str, str]) -> Path:
+    """Return the default merged output while preserving adult asset names."""
+    output_dir = _configured_dir(config["OUTPUT_DIR"])
+    if category == source_catalog.DEFAULT_CATEGORY:
+        return output_dir / config["MERGED_FILENAME"]
+    return output_dir / f"{category}.txt"
+
+
+def default_split_prefix(category: str, config: dict[str, str]) -> str:
+    """Return a category-specific chunk prefix with adult compatibility."""
+    if category == source_catalog.DEFAULT_CATEGORY:
+        return config["SPLIT_PREFIX"]
+    return f"{category}-hosts"
 
 
 class MergeArgs(argparse.Namespace):
@@ -108,6 +149,8 @@ class MergeArgs(argparse.Namespace):
     input: list[str] | None = None
     output: str | None = None
     whitelist: str | None = None
+    category: str = source_catalog.DEFAULT_CATEGORY
+    all_categories: bool = False
     no_dedupe: bool = False
     no_sort: bool = False
     normalize_ip: str | None = None
@@ -117,64 +160,104 @@ class MergeArgs(argparse.Namespace):
     split_prefix: str | None = None
 
 
+def _merge_category(
+    category: str,
+    args: MergeArgs,
+    config: dict[str, str],
+    whitelist_domains: set[str],
+) -> int:
+    files = resolve_input_files(args.input or [], config, category)
+    if not files:
+        logger.error(
+            "%s: no input files found — run `ace-hosts-download --category %s` first",
+            category,
+            category,
+        )
+        return 1
+
+    dedupe = not args.no_dedupe and utils.config_bool(config["REMOVE_DUPLICATES"])
+    domains, stats = merge_files(files, whitelist_domains, dedupe=dedupe, show_progress=not args.no_progress)
+    if not args.no_sort and utils.config_bool(config["SORT_OUTPUT"]):
+        domains.sort()
+
+    if args.output:
+        out_path = Path(args.output)
+        if not out_path.is_absolute():
+            out_path = utils.PROJECT_ROOT / out_path
+    else:
+        out_path = default_output_path(category, config)
+
+    normalize_ip = args.normalize_ip or config["NORMALIZE_IP"]
+    using_builtin_inputs = not (args.input or []) and not config.get("INPUT_FILES", "").strip()
+    source_licenses = source_catalog.licenses_for_category(category) if using_builtin_inputs else ()
+    entry_count = len(domains)
+    header = utils.hosts_header(
+        entry_count,
+        [path.name for path in files],
+        category=category,
+        source_licenses=source_licenses,
+    )
+    body = (f"{normalize_ip} {domain}" for domain in domains)
+    utils.atomic_write_lines(out_path, itertools.chain(header, body))
+
+    logger.info("%s: merged %d unique domain(s) into %s", category, entry_count, out_path)
+    logger.info("%s stats: %s", category, stats)
+    del domains
+
+    if args.split:
+        max_mb = args.split_mb if args.split_mb is not None else float(config["SPLIT_CHUNK_MB"])
+        prefix = args.split_prefix or default_split_prefix(category, config)
+        chunks = split_hosts.split_file(
+            out_path,
+            out_path.parent,
+            max_mb=max_mb,
+            prefix=prefix,
+            show_progress=not args.no_progress,
+        )
+        logger.info("%s: created %d chunk(s) in %s", category, len(chunks), out_path.parent)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ace-hosts-merge",
-        description="Merge host lists into one clean, deduplicated, sorted file.",
+        description="Merge host lists into clean, category-specific blocklists.",
     )
+    parser.add_argument(
+        "--category",
+        choices=source_catalog.category_names(),
+        default=source_catalog.DEFAULT_CATEGORY,
+        help=f"category to merge (default: {source_catalog.DEFAULT_CATEGORY})",
+    )
+    parser.add_argument("--all-categories", action="store_true", help="merge every built-in category")
     parser.add_argument("--input", action="append", default=[], metavar="PATH", help="input file or glob (repeatable)")
-    parser.add_argument("--output", metavar="PATH", help="merged output file (default: $OUTPUT_DIR/$MERGED_FILENAME)")
+    parser.add_argument("--output", metavar="PATH", help="merged output file (single category only)")
     parser.add_argument("--whitelist", metavar="PATH", help="file with domains to exclude (default: $WHITELIST_FILE)")
     parser.add_argument("--no-dedupe", action="store_true", help="keep duplicate domains")
     parser.add_argument("--no-sort", action="store_true", help="do not sort the merged list")
     parser.add_argument("--normalize-ip", metavar="IP", help="IP prefix for every line (default: $NORMALIZE_IP)")
     parser.add_argument("--no-progress", action="store_true", help="disable progress bars")
-    parser.add_argument("--split", action="store_true", help="split the merged file into chunks afterwards")
+    parser.add_argument("--split", action="store_true", help="split each merged file into chunks afterwards")
     parser.add_argument("--split-mb", type=float, metavar="MIB", help="max chunk size in MiB (default: $SPLIT_CHUNK_MB)")
-    parser.add_argument("--split-prefix", metavar="NAME", help="chunk filename prefix (default: $SPLIT_PREFIX)")
+    parser.add_argument("--split-prefix", metavar="NAME", help="chunk filename prefix (single category only)")
     args: MergeArgs = parser.parse_args(argv, namespace=MergeArgs())
 
     config = utils.load_config()
     utils.setup_logging(config["LOG_LEVEL"])
-
-    files = resolve_input_files(args.input or [], config)
-    if not files:
-        logger.error(
-            "no input files found — run `ace-hosts-download` first or pass --input <file|glob>"
-        )
-        return 1
+    if args.all_categories and (args.input or args.output or args.split_prefix or config.get("INPUT_FILES", "").strip()):
+        parser.error("--all-categories cannot be combined with --input, --output, --split-prefix, or INPUT_FILES")
 
     whitelist_path = Path(args.whitelist) if args.whitelist else Path(config["WHITELIST_FILE"])
     if not whitelist_path.is_absolute():
         whitelist_path = utils.PROJECT_ROOT / whitelist_path
     whitelist_domains = load_whitelist(whitelist_path)
 
-    dedupe = not args.no_dedupe and utils.config_bool(config["REMOVE_DUPLICATES"])
-    domains, stats = merge_files(files, whitelist_domains, dedupe=dedupe, show_progress=not args.no_progress)
-
-    if not args.no_sort and utils.config_bool(config["SORT_OUTPUT"]):
-        domains.sort()
-
-    out_path = Path(args.output) if args.output else Path(config["OUTPUT_DIR"]) / config["MERGED_FILENAME"]
-    if not out_path.is_absolute():
-        out_path = utils.PROJECT_ROOT / out_path
-
-    normalize_ip = args.normalize_ip or config["NORMALIZE_IP"]
-    header = utils.hosts_header(len(domains), [path.name for path in files])
-    # Stream the body through a generator so we never hold two copies of the
-    # list in memory (important for 10M+ domain lists).
-    body = (f"{normalize_ip} {domain}" for domain in domains)
-    utils.atomic_write_lines(out_path, itertools.chain(header, body))
-
-    logger.info("merged %d unique domain(s) into %s", len(domains), out_path)
-    logger.info("stats: %s", stats)
-
-    if args.split:
-        max_mb = args.split_mb if args.split_mb is not None else float(config["SPLIT_CHUNK_MB"])
-        prefix = args.split_prefix or config["SPLIT_PREFIX"]
-        chunks = split_hosts.split_file(out_path, out_path.parent, max_mb=max_mb, prefix=prefix)
-        logger.info("created %d chunk(s) in %s", len(chunks), out_path.parent)
-    return 0
+    categories = source_catalog.category_names() if args.all_categories else (args.category,)
+    failed = False
+    for category in categories:
+        if _merge_category(category, args, config, whitelist_domains) != 0:
+            failed = True
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

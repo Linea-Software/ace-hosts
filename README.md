@@ -1,284 +1,308 @@
 # ace-hosts
 
 > **Disclaimer:** This repository — including all scripts, tests, and
-documentation — was fully developed by AI language models (LLMs). It has
-been reviewed and verified with automated tests and a type checker, but it
-should be treated accordingly. Please report any issues you find.
+> documentation — was fully developed by AI language models (LLMs). It has
+> been reviewed and verified with automated tests and a type checker, but it
+> should be treated accordingly. Please report any issues you find.
 
-**A unified pornography blocklist — 3M+ adult domains, rebuilt monthly.**
+**Category-specific DNS blocklists for distracting and addictive websites, rebuilt monthly.**
 
-`ace-hosts` is an automated Python pipeline that downloads, merges and
-deduplicates **adult-content (pornography) blocklists** from many upstream
-sources, and publishes the result as GitHub-friendly hosts files — the same
-approach as the now deleted
-[`columndeeply/hosts`](https://github.com/columndeeply/hosts) repository (a
-unified porn blocklist of more than 10 million domains).
+`ace-hosts` downloads, normalizes, merges, deduplicates and splits upstream
+host/domain lists into ready-to-use hosts files. It started as a successor to
+the maintenance tooling of the deleted
+[`columndeeply/hosts`](https://github.com/columndeeply/hosts) adult blocklist,
+but now builds independent lists for:
 
-Instead of shell scripts, this project uses three small Python scripts with
-logging, retries, progress bars and atomic writes:
+- **adult** — pornography / NSFW sites
+- **gaming** — online games, gaming portals and major gaming services
+- **social** — social networks and major social/messaging platforms
+- **gambling** — betting, casinos and gambling sites
+- **streaming** — video/audio streaming and entertainment services
+- **dating** — dating and matchmaking sites
+- **shopping** — online shopping and commerce sites
 
-| Script | Replaces | What it does |
-| --- | --- | --- |
-| `scripts/download_sources.py` | (manual fetching) | Downloads host lists from multiple upstream sources with retries and rate limiting |
-| `scripts/merge_hosts.py` | `cleanup.sh` + `merger.sh` | Cleans each list (comments, whitespace, IP normalization), merges, deduplicates, applies the whitelist, sorts, and optionally splits |
-| `scripts/split_hosts.py` | (split step of `merger.sh`) | Splits the merged file into `<90 MB` chunks named `hosts00`, `hosts01`, ... |
+The categories stay separate end-to-end: sources download into
+`downloads/<category>/`, each merge consumes only that category's successful
+source manifest, and each release asset has an unambiguous category name.
 
-The output — `hosts00`, `hosts01`, ... — **blocks adult/pornographic
-websites** and works with Pi-hole, AdGuard Home, Technitium DNS, DNS66,
-Daedalus, or directly as a system `hosts` file.
+The historical adult asset names are intentionally preserved for Ace Blocker
+compatibility: `merged_hosts.txt`, `hosts00`, `hosts01`, ... remain the adult
+list. New categories use `<category>.txt` and `<category>-hosts00`,
+`<category>-hosts01`, ... .
 
 ## Features
 
-- **Format-tolerant parsing** — handles `0.0.0.0`/`127.0.0.1`/`::1` hosts
-  lines, bare domain lists, adblock syntax (`||domain^`), wildcards
-  (`*.domain`), inline comments, trailing dots, BOMs and CRLF.
-- **Graceful failures** — per-source retries with exponential backoff; a
-  source that keeps failing is skipped, not fatal.
-- **Whitelist support** — exclude domains from the merged list
-  (`whitelist.txt`, same idea as the original repo's `whitelist/` directory).
-- **GitHub-friendly output** — chunks stay below 90 MB by default (GitHub's
-  hard limit is 100 MB) and each chunk carries the header comments, so every
-  chunk works standalone.
-- **Deterministic builds** — pinned direct dependencies + `uv.lock`.
+- **Seven behavioural categories** with a central source catalog in
+  `scripts/source_catalog.py`.
+- **Format-tolerant parsing** for classic hosts files, bare domains, Adblock
+  syntax (`||domain^`), wildcards, URLs, inline comments, BOMs and CRLF.
+- **Atomic downloads and outputs** — a failed refresh cannot leave a partial
+  source file that is consumed by the next merge.
+- **Stale-source protection** — each download writes a manifest of sources that
+  succeeded during that run; automatic merging follows the manifest rather
+  than blindly merging old files left in the directory.
+- **Whitelist support** via `whitelist.txt`.
+- **Deterministic output** through deduplication and sorting.
+- **GitHub-friendly chunks** below 90 MiB by default, with repeated headers so
+  every chunk is independently usable.
+- **Deterministic environment** through exact direct dependency pins and the
+  committed `uv.lock`.
 
 ## Requirements
 
-- [uv](https://docs.astral.sh/uv/) (0.4+; developed against 0.11)
+- [uv](https://docs.astral.sh/uv/)
 - Python 3.10+
 
 ## Setup
 
 ```bash
 git clone https://github.com/Linea-Software/ace-hosts
+cd ace-hosts
 uv sync
 ```
 
-That's it. `uv sync` reads `pyproject.toml` and the committed `uv.lock`,
-creates `.venv/`, and installs the project as an editable package — including
-its console scripts (`ace-hosts-download`, `ace-hosts-merge`,
-`ace-hosts-split`) — plus the `dev` group (pytest, basedpyright) by default.
-Since the lockfile is committed, every contributor gets the exact same
-dependency set. `uv run` syncs the environment automatically, so it can also
-be used directly without a prior `uv sync`.
-
-Dependencies are pinned exactly in `pyproject.toml` and resolved
-deterministically in `uv.lock`. `uv add` is only needed by maintainers when
-*changing* dependencies (e.g. `uv add requests` to refresh a pin) — anyone
-cloning the repository just runs `uv sync`.
-
 ## Quick start
 
-```bash
-# 1. Download the source lists into downloads/
-uv run python scripts/download_sources.py
+Build every category:
 
-# 2. Merge, deduplicate, sort — and split into <90MB chunks
+```bash
+uv run python scripts/download_sources.py --all-categories
+uv run python scripts/merge_hosts.py --all-categories --split
+```
+
+Or build one category:
+
+```bash
+uv run python scripts/download_sources.py --category gaming
+uv run python scripts/merge_hosts.py --category gaming --split
+```
+
+The default remains `adult`, so the original commands still work:
+
+```bash
+uv run python scripts/download_sources.py
 uv run python scripts/merge_hosts.py --split
 ```
 
-Result:
-
-```
-hosts/
-├── merged_hosts.txt   # single-file merged list (also on the releases page)
-├── hosts00            # ≤90 MB, usable standalone
-├── hosts01
-└── ...
-```
-
-Using the installed commands is equivalent:
+Installed console commands are equivalent:
 
 ```bash
-ace-hosts-download
-ace-hosts-merge --split
-ace-hosts-split --check   # verify chunk sizes afterwards
+ace-hosts-download --all-categories
+ace-hosts-merge --all-categories --split
+ace-hosts-split --check
 ```
 
-### Pipeline
+Typical output:
+
+```text
+hosts/
+├── merged_hosts.txt       # adult, legacy-compatible name
+├── hosts00                # adult chunks
+├── hosts01
+├── gaming.txt
+├── gaming-hosts00
+├── social.txt
+├── social-hosts00
+├── gambling.txt
+├── gambling-hosts00
+├── streaming.txt
+├── streaming-hosts00
+├── dating.txt
+├── dating-hosts00
+├── shopping.txt
+├── shopping-hosts00
+└── sha256_checksums.txt   # release workflow
+```
+
+The number of chunks depends on the current upstream data.
+
+## Pipeline
 
 ```mermaid
 flowchart LR
-    A[Upstream sources] -->|download_sources.py| B[downloads/ raw lists]
-    B -->|merge_hosts.py| C[Dedupe + whitelist + sort]
-    C --> D[hosts/merged_hosts.txt]
-    D -->|split_hosts.py| E[hosts00..hostsNN]
-    E -->|raw URLs| F[Pi-hole / AdGuard / hosts file]
-    D -->|release artifact| F
+    A[Built-in source catalog] --> B[download_sources.py]
+    B --> C[downloads/category + success manifest]
+    C --> D[merge_hosts.py]
+    D --> E[dedupe + whitelist + sort]
+    E --> F[category merged file]
+    F --> G[split_hosts.py]
+    G --> H[category chunks]
 ```
 
-## Usage
+## CLI
 
-### `download_sources.py` — fetch the sources
-
-| Flag | Description |
-| --- | --- |
-| `--sources` | Override sources: bare URLs or `name=url`, comma/newline separated |
-| `--output-dir` | Where raw downloads go (default `downloads/`) |
-| `--dry-run` | Print the source list and exit |
-| `--no-rate-limit` | Skip the politeness delay between sources |
-
-### `merge_hosts.py` — clean, merge, deduplicate
+### `download_sources.py`
 
 | Flag | Description |
 | --- | --- |
-| `--input PATH` | Input file or glob (repeatable). Default: `INPUT_FILES` env var, else everything in `downloads/` |
-| `--output PATH` | Merged output file (default `hosts/merged_hosts.txt`) |
-| `--whitelist PATH` | File with domains to exclude (default `whitelist.txt`) |
-| `--no-dedupe` | Keep duplicate domains |
-| `--no-sort` | Keep insertion order |
-| `--normalize-ip IP` | IP prefix for every line (default `127.0.0.1`) |
-| `--split` | Split the merged file into chunks afterwards |
-| `--split-mb MIB` | Max chunk size (default `90`) |
-| `--split-prefix NAME` | Chunk prefix (default `hosts`) |
+| `--category NAME` | Download one built-in category; default `adult` |
+| `--all-categories` | Download all built-in categories |
+| `--sources LIST` | Override sources for one category with comma/newline-separated URLs or `name=url` entries |
+| `--output-dir PATH` | Base raw-download directory; category subdirectories are created below it |
+| `--dry-run` | Print selected sources without downloading |
+| `--no-rate-limit` | Skip the delay between upstream requests |
 
-### `split_hosts.py` — split into GitHub-friendly chunks
+`--sources`/`SOURCES` is intentionally single-category only. Custom source
+names are sanitized before they are used as local filenames.
+
+### `merge_hosts.py`
 
 | Flag | Description |
 | --- | --- |
-| `--input PATH` | Merged file to split (default `hosts/merged_hosts.txt`) |
-| `--output-dir PATH` | Where chunks are written (default: input's directory) |
-| `--max-mb MIB` | Max chunk size (default `90`) |
-| `--prefix NAME` | Chunk prefix (default `hosts`) |
-| `--check` | Verify existing chunks instead of splitting |
+| `--category NAME` | Merge one category; default `adult` |
+| `--all-categories` | Merge every built-in category |
+| `--input PATH` | Explicit input file/glob, repeatable; single-category mode only |
+| `--output PATH` | Explicit merged output; single-category mode only |
+| `--whitelist PATH` | Domains to exclude |
+| `--no-dedupe` | Keep duplicates |
+| `--no-sort` | Preserve merge order |
+| `--normalize-ip IP` | Hosts-file IP prefix; default `127.0.0.1` |
+| `--split` | Split the merged output after writing it |
+| `--split-mb MIB` | Maximum chunk size; default `90` |
+| `--split-prefix NAME` | Override chunk prefix; single-category mode only |
+| `--no-progress` | Disable progress bars |
 
-Chunks are named `hosts00`, `hosts01`, ... (zero-padded; grows to three
-digits past 99 chunks). Lines are never split across chunks, and each chunk
-starts with the header comments so it can be served directly as a blocklist
-URL.
+Automatic input selection prefers the downloader's success manifest. For
+backward compatibility, the adult category also accepts the old flat
+`downloads/*` layout if `downloads/adult/` does not exist yet.
+
+### `split_hosts.py`
+
+| Flag | Description |
+| --- | --- |
+| `--input PATH` | Merged file to split; default `hosts/merged_hosts.txt` |
+| `--output-dir PATH` | Chunk output directory |
+| `--max-mb MIB` | Maximum chunk size |
+| `--prefix NAME` | Chunk prefix |
+| `--check` | Verify existing numeric-suffix chunks instead of splitting |
+| `--no-progress` | Disable progress bars |
+
+Splitting first stages the complete new chunk set in a temporary directory,
+then publishes it and removes stale numeric chunks from older builds. Chunk
+size accounting includes the complete per-chunk header, including chunk
+numbers wider than two digits.
+
+## Built-in categories and sources
+
+The catalog intentionally targets **behavioural/distraction blocking**, not a
+generic malware/ad/tracker filter. Broad security lists are therefore not
+mixed into these categories.
+
+| Category | Built-in sources |
+| --- | --- |
+| adult | StevenBlack `porn-only`; Block List Project porn; 4skinSkywalker Anti-Porn; tiuxo porn; saskuu porno; StbanMc CommunityBlocklists porn; zangadoprojets Pornpages; HaGeZi NSFW; Sinfonietta pornography; chadmayfield porn; Energized Porn |
+| gaming | UT1 `games`; Block List Project Fortnite |
+| social | StevenBlack `social-only`; UT1 `social_networks`; Block List Project Facebook, TikTok, Twitter/X and WhatsApp |
+| gambling | Block List Project gambling; StevenBlack `gambling-only`; UT1 `gambling` |
+| streaming | UT1 `audio-video`; Block List Project YouTube |
+| dating | UT1 `dating` |
+| shopping | UT1 `shopping` |
+
+Exact raw URLs, source homepages and license labels live in
+[`scripts/source_catalog.py`](scripts/source_catalog.py), making source changes
+reviewable in one place. The monthly job tolerates an individual dead source,
+but fails if no selected source succeeds.
+
+### Source families
+
+- **UT1 / Université Toulouse Capitole** provides categorized domain data for
+  games, gambling, social networks, audio/video, dating and shopping. The
+  project publishes the data under CC BY-SA 4.0; `ace-hosts` consumes the daily
+  GitHub mirror maintained by `olbat/ut1-blacklists`.
+- **Block List Project** supplies dedicated category/service lists including
+  porn, gambling, Facebook, TikTok, Twitter/X, WhatsApp, YouTube and Fortnite.
+- **StevenBlack/hosts** supplies separate extension-only lists for porn, social
+  and gambling. `ace-hosts` deliberately uses those category-only variants —
+  not StevenBlack's general adware/malware base list.
+- The adult category retains several additional specialist sources to preserve
+  the coverage of the original project.
+
+## Licensing of generated data
+
+The **ace-hosts source code** in this repository is MIT-licensed. Generated
+blocklist data is assembled from third-party datasets and is **not made MIT by
+this repository's code license**. Upstream license and attribution/share-alike
+obligations remain relevant to redistributed generated data.
+
+Generated headers record the distinct source-license labels for built-in
+categories. In particular, UT1 data is CC BY-SA 4.0, Block List Project is
+published under the Unlicense, and other adult/StevenBlack sources have their
+own upstream terms. Treat the labels as maintenance metadata and verify the
+upstream repositories when making licensing decisions.
 
 ## Configuration
 
-Copy `.env.example` to `.env` and adjust. All keys are optional.
+All keys are optional and may be supplied through `.env` or the environment.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `SOURCES` | *(built-in list)* | Comma/newline separated `name=url` or bare URLs |
-| `DOWNLOAD_DIR` | `downloads` | Raw download directory |
-| `OUTPUT_DIR` | `hosts` | Merged output / chunks directory |
-| `MERGED_FILENAME` | `merged_hosts.txt` | Name of the merged file |
-| `WHITELIST_FILE` | `whitelist.txt` | Domains excluded from the merge |
-| `INPUT_FILES` | *(empty)* | Comma-separated files/globs to merge instead of `downloads/` |
-| `SPLIT_CHUNK_MB` | `90` | Max chunk size in MiB |
-| `SPLIT_PREFIX` | `hosts` | Chunk filename prefix |
+| `SOURCES` | *(built-in category sources)* | Custom sources for one category |
+| `DOWNLOAD_DIR` | `downloads` | Base raw-download directory |
+| `OUTPUT_DIR` | `hosts` | Merged/chunk output directory |
+| `MERGED_FILENAME` | `merged_hosts.txt` | Legacy adult merged filename |
+| `WHITELIST_FILE` | `whitelist.txt` | Domains excluded from merges |
+| `INPUT_FILES` | *(empty)* | Explicit single-category inputs/globs |
+| `SPLIT_CHUNK_MB` | `90` | Chunk size in MiB |
+| `SPLIT_PREFIX` | `hosts` | Legacy adult chunk prefix |
 | `REMOVE_DUPLICATES` | `true` | Deduplicate domains |
-| `SORT_OUTPUT` | `true` | Sort the merged list |
-| `NORMALIZE_IP` | `127.0.0.1` | IP prefix for merged lines |
-| `STRIP_COMMENTS` | `true` | Strip comments and blank lines |
-| `REQUEST_TIMEOUT` | `30` | Per-request timeout (seconds) |
+| `SORT_OUTPUT` | `true` | Sort output |
+| `NORMALIZE_IP` | `127.0.0.1` | Hosts-file IP prefix |
+| `REQUEST_TIMEOUT` | `30` | Per-request timeout in seconds |
 | `RETRIES` | `3` | Retries per source |
-| `RETRY_BACKOFF` | `2.0` | Backoff base (`backoff * 2^attempt`) |
-| `RATE_LIMIT_DELAY` | `1.0` | Delay between sources (seconds) |
-| `USER_AGENT` | `ace-hosts/0.1` | User-Agent for downloads |
-| `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `RETRY_BACKOFF` | `2.0` | Exponential-backoff base |
+| `RATE_LIMIT_DELAY` | `1.0` | Delay between source downloads |
+| `USER_AGENT` | `ace-hosts/0.1` | Download User-Agent |
+| `LOG_LEVEL` | `INFO` | Logging level |
 
-## Default sources
+## Releases
 
-The built-in list mirrors the sources used by the original
-[`columndeeply/hosts`](https://github.com/columndeeply/hosts) repo
-(StevenBlack, blocklistproject, ...) — all of them adult-content /
-pornography blocklists. Sources that returned 404 were pruned
-on 2026-08-22 (cbuijs/shallalist, RPiList, purify, mypdns, mhxion, 11201010,
-sibaspage). Sinfonietta was initially pruned as a 404 but restored the same
-day — the correct filename is `pornography-hosts`, not `porn-hosts`.
-Rejected candidates: Bon-Appetit/porn-domains (CC BY-SA 4.0 — share-alike
-conflicts with this project's MIT license), cbuijs/accomplist (no license),
-mhhakim/pihole-blocklist (no license), mrvivacious PorNo (Fair Source
-License, 1-user limit), Hagezi/zachlagden nsfw raw URLs (404). Set `SOURCES`
-in `.env` (or pass `--sources`) to customize:
+The GitHub `Release` workflow runs on the first day of every month at 03:00
+UTC. It downloads all categories, rebuilds the merged files/chunks, creates
+`sha256_checksums.txt`, and publishes every output under a `vYYYY.MM.DD` tag.
 
-| Name | URL |
-| --- | --- |
-| stevenblack | https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts |
-| blocklistproject-porn | https://raw.githubusercontent.com/blocklistproject/Lists/master/porn.txt |
-| 4skinskywalker | https://raw.githubusercontent.com/4skinSkywalker/Anti-Porn-HOSTS-File/master/HOSTS.txt |
-| tiuxo-porn | https://raw.githubusercontent.com/tiuxo/hosts/master/porn |
-| saskuu-porno | https://raw.githubusercontent.com/saskuu/blocklist/main/porno.txt |
-| stbanmc-porn | https://raw.githubusercontent.com/StbanMc/CommunityBlocklists/main/exports/domains/porn.txt (MIT, ~1.1M domains) |
-| zangadoprojets-porn | https://raw.githubusercontent.com/zangadoprojets/pi-hole-blocklist/main/Pornpages.txt (MIT, ~2.07M domains, last file update 2022) |
-| hagezi-nsfw | https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/nsfw-onlydomains.txt (GPL-3.0, ~114K domains, updated daily) |
-| sinfonietta-porn | https://raw.githubusercontent.com/Sinfonietta/hostfiles/master/pornography-hosts (MIT, ~1.5 MB) |
-| chadmayfield-porn | https://raw.githubusercontent.com/chadmayfield/my-pihole-blocklists/master/lists/pi_blocklist_porn_all.list (GPL-3.0, ~50 MB, last update 2021) |
-| energized-porn | https://raw.githubusercontent.com/EnergizedProtection/EnergizedHosts/master/EnergizedPorn/energized/EnergizedPorn-domains.txt (MIT, ~6.5 MB) |
+Adult compatibility URLs remain stable:
 
-Sources go stale — the downloader skips failures gracefully, and PRs updating
-this table are welcome.
-
-## Using the output
-
-The generated lists block access to adult/pornographic content at the DNS
-level — they can be used as a parental-control or personal blocklist.
-
-### Pi-hole / AdGuard Home / Technitium DNS
-
-Add each chunk as a blocklist (the header comment on every chunk makes it
-valid standalone). These URLs are stable and always point to the latest
-release:
-
-```
+```text
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/merged_hosts.txt
 https://github.com/Linea-Software/ace-hosts/releases/latest/download/hosts00
 https://github.com/Linea-Software/ace-hosts/releases/latest/download/hosts01
-...
 ```
 
-### hosts file
+New categories follow the same pattern, for example:
 
-- **Windows** — append the lines to `C:\Windows\System32\drivers\etc\hosts`
-  (administrator privileges required).
-- **Linux / macOS** — append to `/etc/hosts`:
-  `cat hosts0X >> /etc/hosts`
-- **Android** — use a DNS-based blocker (DNS66, personalDNSfilter, Daedalus)
-  and add the chunk URLs above.
-
-## Updating
-
-The repository is rebuilt automatically on the **1st of every month (03:00
-UTC)** by the `Release` workflow (`.github/workflows/release.yml`): it
-downloads the sources, merges, splits and publishes the chunks plus
-`merged_hosts.txt` and a `sha256_checksums.txt` checksum file as release
-assets under a `vYYYY.MM.DD` tag. To trigger a build outside the schedule:
-
-- **GitHub UI:** Actions → *Release* → *Run workflow*
-- **CLI:** `gh workflow run release.yml`
-
-Run the pipeline locally at any time:
-
-```bash
-uv run python scripts/download_sources.py
-uv run python scripts/merge_hosts.py --split
+```text
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/gaming.txt
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/gaming-hosts00
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/social.txt
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/gambling.txt
 ```
 
 ## Development
 
 ```bash
-uv sync              # install including dev dependencies (default)
-uv run pytest        # run the test suite
-uv run basedpyright  # type check (must stay at 0 errors / 0 warnings)
+uv sync
+uv run pytest
+uv run basedpyright
+uv run python -m compileall scripts tests
 ```
 
-The tests cover format parsing, whitelist filtering, deduplication and the
-split guarantees (naming, size limit, line integrity) without touching the
-network.
+Tests never require network access. Source URL health is a maintenance concern,
+not a unit-test dependency.
 
 ## Contributing
 
-- **Domain suggestions / false positives** — open an issue. If you have more
-  than a couple dozen domains, submit a PR.
-- **New sources** — PR the URL into `scripts/download_sources.py` (and the
-  README table), with a link to the source's page.
-- **Whitelist** — add safe, active domains to `whitelist.txt`. Do not
-  whitelist dead domains: they may come back. Only whitelist domains that
-  point to a non-blocked site.
-- **Generated files** — please do not edit `hosts/*` directly; they are
-  generated by the pipeline. Changes belong in sources, `whitelist.txt`, or a
-  PR to the scripts.
+- **False positives / missing domains:** open an issue or PR.
+- **New category/source:** edit `scripts/source_catalog.py` and document the
+  upstream license/homepage.
+- **Whitelist:** add safe active domains to `whitelist.txt`.
+- **Generated files:** do not edit `hosts/*` or `downloads/*` by hand.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT for the repository's own source code — see [LICENSE](LICENSE). Third-party
+blocklist data retains its upstream licensing terms; see the licensing section
+above and the source catalog.
 
-**Credits:** this project derives from, and is a reimplementation of, the
-[`columndeeply/hosts`](https://github.com/columndeeply/hosts) repository
-(archived at
-https://web.archive.org/web/20260217031549/https://github.com/columndeeply/hosts),
-which is licensed under the MIT License. The source lists it aggregates are
-the work of their respective maintainers — see the sources table above.
+**Credits:** the original adult-list maintenance approach derives from the
+archived `columndeeply/hosts` project. Category data is provided by the
+respective upstream maintainers listed above.

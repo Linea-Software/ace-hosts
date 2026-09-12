@@ -67,7 +67,6 @@ def test_is_valid_domain():
 
 def test_iter_domains_handles_bom_and_crlf(tmp_path: Path):
     source = tmp_path / "with-bom.txt"
-    # UTF-8 BOM + CRLF line endings, as found on some Windows-hosted lists.
     source.write_bytes(b"\xef\xbb\xbf0.0.0.0 alpha.example.com\r\n127.0.0.1 beta.example.org\r\n")
     assert list(utils.iter_domains(source)) == ["alpha.example.com", "beta.example.org"]
 
@@ -76,6 +75,12 @@ def test_sanitize_source_filename():
     assert utils.sanitize_source_filename("https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts") == "hosts"
     assert utils.sanitize_source_filename("https://example.com/a?b=1") == "a_b_1"
     assert utils.sanitize_source_filename("https://example.com/") == "source"
+
+
+def test_sanitize_source_name_blocks_path_components():
+    assert utils.sanitize_source_name("../escape") == "_escape"
+    assert utils.sanitize_source_name(r"..\escape") == "_escape"
+    assert utils.sanitize_source_name("...") == "source"
 
 
 def test_human_size():
@@ -100,3 +105,15 @@ def test_hosts_header_and_chunk_header():
     assert any("Entries: 42" in line for line in header)
     assert any("Sources: one, two" in line for line in header)
     assert utils.chunk_header(3) == ["# ace-hosts blocklist - chunk 03"]
+
+
+def test_category_header_carries_category_and_source_licenses():
+    header = utils.hosts_header(
+        5,
+        ["source.txt"],
+        category="gaming",
+        source_licenses=["CC BY-SA 4.0", "Unlicense"],
+    )
+    assert header[0] == "# Title: ace-hosts gaming blocklist"
+    assert "# Category: gaming" in header
+    assert "# Source licenses: CC BY-SA 4.0, Unlicense" in header

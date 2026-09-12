@@ -1,21 +1,18 @@
-"""Download host lists from upstream sources.
-
-This is the fetch side of the maintenance pipeline that the archived
-columndeeply/hosts repository performed by hand: download the source lists,
-then feed them to ``merge_hosts.py`` (which combines the original
-``cleanup.sh`` + ``merger.sh`` steps).
+"""Download category-specific host lists from upstream sources.
 
 Failures are handled gracefully: each source is retried with exponential
 backoff, rate limiting is applied between sources, and a source that keeps
-failing is skipped (with a warning) instead of aborting the run.
+failing is skipped instead of aborting the whole category build.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -23,44 +20,27 @@ import requests
 from tqdm import tqdm
 
 if __package__ in (None, ""):
-    # Running directly as a script (python scripts/download_sources.py): make
-    # the project root importable so the package import below works in every
-    # execution mode (script, module, installed console script).
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts import utils
+from scripts import source_catalog, utils
 
 logger = logging.getLogger("ace-hosts.download")
 
-# Default sources, mirroring the kind of lists used by the original
-# columndeeply/hosts repo (StevenBlack, blocklistproject, cbuijs, RPiList,
-# tiuxo, ...). Override with the SOURCES env var or --sources. Sources that
-# disappear are skipped automatically; keep the list up to date via PRs.
-DEFAULT_SOURCES: dict[str, str] = {
-    "stevenblack": "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
-    "blocklistproject-porn": "https://raw.githubusercontent.com/blocklistproject/Lists/master/porn.txt",
-    "4skinskywalker": "https://raw.githubusercontent.com/4skinSkywalker/Anti-Porn-HOSTS-File/master/HOSTS.txt",
-    "tiuxo-porn": "https://raw.githubusercontent.com/tiuxo/hosts/master/porn",
-    "saskuu-porno": "https://raw.githubusercontent.com/saskuu/blocklist/main/porno.txt",
-    "stbanmc-porn": "https://raw.githubusercontent.com/StbanMc/CommunityBlocklists/main/exports/domains/porn.txt",
-    "zangadoprojets-porn": "https://raw.githubusercontent.com/zangadoprojets/pi-hole-blocklist/main/Pornpages.txt",
-    "hagezi-nsfw": "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/nsfw-onlydomains.txt",
-    "sinfonietta-porn": "https://raw.githubusercontent.com/Sinfonietta/hostfiles/master/pornography-hosts",
-    "chadmayfield-porn": "https://raw.githubusercontent.com/chadmayfield/my-pihole-blocklists/master/lists/pi_blocklist_porn_all.list",
-    "energized-porn": "https://raw.githubusercontent.com/EnergizedProtection/EnergizedHosts/master/EnergizedPorn/energized/EnergizedPorn-domains.txt",
-}
-
+# Backwards-compatible public name used by tests/callers: the original pipeline
+# had one default source map, which is now the adult category.
+DEFAULT_SOURCES: dict[str, str] = source_catalog.sources_for_category(source_catalog.DEFAULT_CATEGORY)
 CHUNK_SIZE = 64 * 1024
 
 
-def parse_sources(raw: str) -> dict[str, str]:
+def parse_sources(raw: str, defaults: dict[str, str] | None = None) -> dict[str, str]:
     """Parse a SOURCES-style string into an ordered ``{name: url}`` map.
 
     Entries are separated by commas or newlines. Each entry is either a bare
-    URL (name derived from the filename) or ``name=url``.
+    URL (name derived from the filename) or ``name=url``. User-provided names
+    are sanitized so they can never escape the configured download directory.
     """
     if not raw.strip():
-        return dict(DEFAULT_SOURCES)
+        return dict(DEFAULT_SOURCES if defaults is None else defaults)
     sources: dict[str, str] = {}
     for entry in re.split(r"[\n,]+", raw.strip()):
         entry = entry.strip()
@@ -68,11 +48,20 @@ def parse_sources(raw: str) -> dict[str, str]:
             continue
         if "=" in entry:
             name, _, url = entry.partition("=")
-            name = name.strip() or utils.sanitize_source_filename(url)
-            sources[name] = url.strip()
+            url = url.strip()
+            name = utils.sanitize_source_name(name.strip() or utils.sanitize_source_filename(url))
+            sources[name] = url
         else:
-            sources[utils.sanitize_source_filename(entry)] = entry
+            sources[utils.sanitize_source_name(utils.sanitize_source_filename(entry))] = entry
     return sources
+
+
+def download_path(name: str, url: str, dest_dir: Path) -> Path:
+    """Return the safe local path used for a source download."""
+    safe_name = utils.sanitize_source_name(name)
+    suffix = Path(url.split("?", 1)[0]).suffix or ".txt"
+    filename = safe_name if Path(safe_name).suffix else f"{safe_name}{suffix}"
+    return dest_dir / filename
 
 
 def download_source(
@@ -84,18 +73,20 @@ def download_source(
     backoff: float,
     user_agent: str,
 ) -> int | None:
-    """Download one source into *dest_dir*; return bytes written or None.
+    """Download one source atomically into *dest_dir*; return bytes or None.
 
-    Streams the response to disk with a progress bar and retries with
-    exponential backoff on transient failures.
+    A failed refresh never leaves a partially-written source file behind. Any
+    previous copy at the same path is removed before the refresh so a later
+    merge cannot silently consume stale data after a failed download.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    suffix = Path(url.split("?")[0]).suffix or ".txt"
-    dest = dest_dir / f"{name}{suffix}"
+    dest = download_path(name, url, dest_dir)
+    dest.unlink(missing_ok=True)
 
     headers = {"User-Agent": user_agent}
     last_error: Exception | None = None
     for attempt in range(retries + 1):
+        fd, tmp_name = tempfile.mkstemp(prefix=dest.name + ".", suffix=".tmp", dir=str(dest_dir))
         try:
             with requests.get(url, stream=True, timeout=timeout, headers=headers) as response:
                 response.raise_for_status()
@@ -107,19 +98,26 @@ def download_source(
                     desc=f"{name[:28]:<28}",
                     leave=False,
                 ) as progress:
-                    with dest.open("wb") as handle:
+                    with os.fdopen(fd, "wb") as handle:
+                        fd = -1
                         for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                             if not chunk:
                                 continue
                             handle.write(chunk)
                             progress.update(len(chunk))
-            size = dest.stat().st_size
+            size = Path(tmp_name).stat().st_size
             if size == 0:
-                dest.unlink(missing_ok=True)
                 raise ValueError("empty response body")
+            os.replace(tmp_name, dest)
             return size
         except (requests.RequestException, OSError, ValueError) as exc:
             last_error = exc
+            if fd >= 0:
+                os.close(fd)
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
             if attempt < retries:
                 sleep_for = backoff * (2.0**attempt)
                 logger.warning(
@@ -135,55 +133,29 @@ def download_source(
     return None
 
 
-class DownloadArgs(argparse.Namespace):
-    """Typed arguments for the download CLI (see main())."""
-
-    sources: str | None = None
-    output_dir: str | None = None
-    dry_run: bool = False
-    no_rate_limit: bool = False
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="ace-hosts-download",
-        description="Download host lists from upstream sources for merging.",
-    )
-    parser.add_argument(
-        "--sources",
-        help="override sources: bare URLs or name=url entries, comma/newline separated (default: built-in list, or the SOURCES env var)",
-    )
-    parser.add_argument(
-        "--output-dir",
-        help="directory for raw downloads (default: $DOWNLOAD_DIR, i.e. downloads/)",
-    )
-    parser.add_argument("--dry-run", action="store_true", help="list sources and exit without downloading")
-    parser.add_argument("--no-rate-limit", action="store_true", help="skip the delay between sources")
-    args: DownloadArgs = parser.parse_args(argv, namespace=DownloadArgs())
-
-    config = utils.load_config()
-    utils.setup_logging(config["LOG_LEVEL"])
-
-    sources = parse_sources(args.sources or config.get("SOURCES") or "")
-    if not sources:
-        logger.error("no sources configured")
-        return 1
-
-    dest_dir = Path(args.output_dir or config["DOWNLOAD_DIR"])
-    if not dest_dir.is_absolute():
-        dest_dir = utils.PROJECT_ROOT / dest_dir
-
-    if args.dry_run:
+def _download_category(
+    category: str,
+    sources: dict[str, str],
+    base_dest_dir: Path,
+    config: dict[str, str],
+    *,
+    dry_run: bool,
+    delay: float,
+) -> tuple[int, int, int]:
+    """Download one category and return ``(ok, failed, bytes)``."""
+    dest_dir = base_dest_dir / category
+    if dry_run:
+        print(f"[{category}]")
         for name, url in sources.items():
             print(f"{name}: {url}")
-        return 0
+        return 0, 0, 0
 
-    delay = 0.0 if args.no_rate_limit else float(config["RATE_LIMIT_DELAY"])
     ok_count = 0
     failed_count = 0
     total_bytes = 0
-    source_names = list(sources)
-    for index, (name, url) in enumerate(sources.items()):
+    downloaded_files: list[str] = []
+    source_items = list(sources.items())
+    for index, (name, url) in enumerate(source_items):
         size = download_source(
             name,
             url,
@@ -198,21 +170,96 @@ def main(argv: list[str] | None = None) -> int:
         else:
             ok_count += 1
             total_bytes += size
-            logger.info("%s: %s downloaded", name, utils.human_size(size))
-        # Be polite: wait between sources unless rate limiting is disabled.
-        if delay > 0 and index < len(source_names) - 1:
+            downloaded_files.append(download_path(name, url, dest_dir).name)
+            logger.info("%s/%s: %s downloaded", category, name, utils.human_size(size))
+        if delay > 0 and index < len(source_items) - 1:
             time.sleep(delay)
 
+    # The manifest makes automatic merging immune to stale orphaned downloads
+    # from sources that were renamed/removed between runs.
+    utils.atomic_write_lines(dest_dir / source_catalog.DOWNLOAD_MANIFEST, downloaded_files)
     logger.info(
-        "download complete: %d/%d sources succeeded, %s total",
+        "%s: %d/%d sources succeeded, %s total",
+        category,
         ok_count,
         ok_count + failed_count,
         utils.human_size(total_bytes),
     )
     if failed_count:
-        logger.warning("%d source(s) failed and were skipped", failed_count)
-    if ok_count == 0:
-        logger.error("all sources failed; nothing to merge")
+        logger.warning("%s: %d source(s) failed and were skipped", category, failed_count)
+    return ok_count, failed_count, total_bytes
+
+
+class DownloadArgs(argparse.Namespace):
+    """Typed arguments for the download CLI (see main())."""
+
+    sources: str | None = None
+    output_dir: str | None = None
+    category: str = source_catalog.DEFAULT_CATEGORY
+    all_categories: bool = False
+    dry_run: bool = False
+    no_rate_limit: bool = False
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="ace-hosts-download",
+        description="Download category-specific host lists from upstream sources.",
+    )
+    parser.add_argument(
+        "--category",
+        choices=source_catalog.category_names(),
+        default=source_catalog.DEFAULT_CATEGORY,
+        help=f"category to download (default: {source_catalog.DEFAULT_CATEGORY})",
+    )
+    parser.add_argument("--all-categories", action="store_true", help="download every built-in category")
+    parser.add_argument(
+        "--sources",
+        help="override sources for one category: bare URLs or name=url entries, comma/newline separated",
+    )
+    parser.add_argument(
+        "--output-dir",
+        help="base directory for raw category downloads (default: $DOWNLOAD_DIR, i.e. downloads/)",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="list selected sources and exit")
+    parser.add_argument("--no-rate-limit", action="store_true", help="skip the delay between sources")
+    args: DownloadArgs = parser.parse_args(argv, namespace=DownloadArgs())
+
+    config = utils.load_config()
+    utils.setup_logging(config["LOG_LEVEL"])
+    custom_sources = args.sources or config.get("SOURCES") or ""
+    if args.all_categories and custom_sources.strip():
+        parser.error("--sources/SOURCES cannot be combined with --all-categories")
+
+    base_dest_dir = Path(args.output_dir or config["DOWNLOAD_DIR"])
+    if not base_dest_dir.is_absolute():
+        base_dest_dir = utils.PROJECT_ROOT / base_dest_dir
+
+    categories = source_catalog.category_names() if args.all_categories else (args.category,)
+    delay = 0.0 if args.no_rate_limit else float(config["RATE_LIMIT_DELAY"])
+    total_ok = 0
+    for category in categories:
+        defaults = source_catalog.sources_for_category(category)
+        category_sources = parse_sources(custom_sources, defaults)
+        if not category_sources:
+            logger.error("%s: no sources configured", category)
+            continue
+        ok_count, _, _ = _download_category(
+            category,
+            category_sources,
+            base_dest_dir,
+            config,
+            dry_run=args.dry_run,
+            delay=delay,
+        )
+        if args.dry_run:
+            continue
+        total_ok += ok_count
+
+    if args.dry_run:
+        return 0
+    if total_ok == 0:
+        logger.error("all selected sources failed; nothing to merge")
         return 1
     return 0
 
