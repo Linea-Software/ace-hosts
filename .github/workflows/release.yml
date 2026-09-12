@@ -42,19 +42,18 @@ jobs:
 
       - name: Build release notes
         run: |
-          generated=$(grep -m1 '^# Generated:' hosts/merged_hosts.txt | awk '{print $3}')
+          generated=$(grep -m1 '^# Generated:' hosts/adult.txt | awk '{print $3}')
           cat > /tmp/release-body.md <<EOF
           Automated monthly build of the Ace category blocklists.
 
           - Generated: ${generated}
-          - Adult compatibility assets: merged_hosts.txt and hosts00..hostsNN
-          - Other categories: <category>.txt and <category>-hosts00..NN
+          - Assets: <category>.txt and <category>-hosts00..NN
 
           Unique domains by category:
           EOF
 
           for entry in \
-            "adult:hosts/merged_hosts.txt" \
+            "adult:hosts/adult.txt" \
             "gaming:hosts/gaming.txt" \
             "social:hosts/social.txt" \
             "gambling:hosts/gambling.txt" \

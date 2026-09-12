@@ -25,10 +25,9 @@ The categories stay separate end-to-end: sources download into
 `downloads/<category>/`, each merge consumes only that category's successful
 source manifest, and each release asset has an unambiguous category name.
 
-The historical adult asset names are intentionally preserved for Ace Blocker
-compatibility: `merged_hosts.txt`, `hosts00`, `hosts01`, ... remain the adult
-list. New categories use `<category>.txt` and `<category>-hosts00`,
-`<category>-hosts01`, ... .
+Every category uses an explicit asset name. Adult artifacts are `adult.txt`,
+`adult-hosts00`, `adult-hosts01`, ...; the old ambiguous `merged_hosts.txt`,
+`hosts00`, and `hosts01` release assets are no longer produced.
 
 ## Features
 
@@ -96,9 +95,9 @@ Typical output:
 
 ```text
 hosts/
-├── merged_hosts.txt       # adult, legacy-compatible name
-├── hosts00                # adult chunks
-├── hosts01
+├── adult.txt
+├── adult-hosts00
+├── adult-hosts01
 ├── gaming.txt
 ├── gaming-hosts00
 ├── social.txt
@@ -170,7 +169,7 @@ backward compatibility, the adult category also accepts the old flat
 
 | Flag | Description |
 | --- | --- |
-| `--input PATH` | Merged file to split; default `hosts/merged_hosts.txt` |
+| `--input PATH` | Merged file to split; default `hosts/adult.txt` |
 | `--output-dir PATH` | Chunk output directory |
 | `--max-mb MIB` | Maximum chunk size |
 | `--prefix NAME` | Chunk prefix |
@@ -239,11 +238,11 @@ All keys are optional and may be supplied through `.env` or the environment.
 | `SOURCES` | *(built-in category sources)* | Custom sources for one category |
 | `DOWNLOAD_DIR` | `downloads` | Base raw-download directory |
 | `OUTPUT_DIR` | `hosts` | Merged/chunk output directory |
-| `MERGED_FILENAME` | `merged_hosts.txt` | Legacy adult merged filename |
+| `MERGED_FILENAME` | `adult.txt` | Default adult merged filename |
 | `WHITELIST_FILE` | `whitelist.txt` | Domains excluded from merges |
 | `INPUT_FILES` | *(empty)* | Explicit single-category inputs/globs |
 | `SPLIT_CHUNK_MB` | `90` | Chunk size in MiB |
-| `SPLIT_PREFIX` | `hosts` | Legacy adult chunk prefix |
+| `SPLIT_PREFIX` | `adult-hosts` | Default adult chunk prefix |
 | `REMOVE_DUPLICATES` | `true` | Deduplicate domains |
 | `SORT_OUTPUT` | `true` | Sort output |
 | `NORMALIZE_IP` | `127.0.0.1` | Hosts-file IP prefix |
@@ -260,15 +259,15 @@ The GitHub `Release` workflow runs on the first day of every month at 03:00
 UTC. It downloads all categories, rebuilds the merged files/chunks, creates
 `sha256_checksums.txt`, and publishes every output under a `vYYYY.MM.DD` tag.
 
-Adult compatibility URLs remain stable:
+Adult release assets use the same explicit category naming as every other list:
 
 ```text
-https://github.com/Linea-Software/ace-hosts/releases/latest/download/merged_hosts.txt
-https://github.com/Linea-Software/ace-hosts/releases/latest/download/hosts00
-https://github.com/Linea-Software/ace-hosts/releases/latest/download/hosts01
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult.txt
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult-hosts00
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult-hosts01
 ```
 
-New categories follow the same pattern, for example:
+Other categories follow the same pattern, for example:
 
 ```text
 https://github.com/Linea-Software/ace-hosts/releases/latest/download/gaming.txt

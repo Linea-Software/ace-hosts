@@ -129,7 +129,7 @@ def merge_files(
 
 
 def default_output_path(category: str, config: dict[str, str]) -> Path:
-    """Return the default merged output while preserving adult asset names."""
+    """Return the default merged output for one category."""
     output_dir = _configured_dir(config["OUTPUT_DIR"])
     if category == source_catalog.DEFAULT_CATEGORY:
         return output_dir / config["MERGED_FILENAME"]
@@ -137,7 +137,7 @@ def default_output_path(category: str, config: dict[str, str]) -> Path:
 
 
 def default_split_prefix(category: str, config: dict[str, str]) -> str:
-    """Return a category-specific chunk prefix with adult compatibility."""
+    """Return a category-specific chunk prefix."""
     if category == source_catalog.DEFAULT_CATEGORY:
         return config["SPLIT_PREFIX"]
     return f"{category}-hosts"

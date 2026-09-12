@@ -4,9 +4,8 @@
 splits category-specific host lists for DNS-based blocking. It began as a
 reimplementation of the archived [`columndeeply/hosts`](https://github.com/columndeeply/hosts)
 adult-list tooling and now builds separate adult, gaming, social, gambling,
-streaming, dating and shopping lists. Adult release assets keep the legacy
-`merged_hosts.txt`, `hosts00`, `hosts01`, ... names; other categories use
-category-prefixed assets.
+streaming, dating and shopping lists. Every release asset is category-prefixed:
+`adult.txt`, `adult-hosts00`, `gaming.txt`, `gaming-hosts00`, ... .
 
 This project lives inside the `ace-project` monorepo directory but is a
 **standalone git repository** (`C:\Projects\ace-project\ace-hosts`).
@@ -59,7 +58,7 @@ Always use `uv` — never bare `pip`/`python` outside the project environment.
 | `uv run basedpyright` | Type check; must be 0 errors, 0 warnings |
 | `uv run python scripts/download_sources.py --all-categories` | Fetch every built-in category |
 | `uv run python scripts/merge_hosts.py --all-categories --split` | Build every category and chunks |
-| `uv run python scripts/split_hosts.py --check` | Verify legacy adult chunks |
+| `uv run python scripts/split_hosts.py --check` | Verify adult chunks |
 | `uv audit` | Check lockfile against OSV advisories |
 | `uv add <package>` / `uv remove <package>` | Maintainers only: change direct dependencies |
 
@@ -74,12 +73,9 @@ are installed as entry points into `scripts.*:main`.
    published. A per-category `.ace-hosts-sources` manifest lists only sources
    that succeeded in the current run.
 3. `merge_hosts.py` follows that manifest, parses inputs line-by-line, applies
-   `whitelist.txt`, deduplicates/sorts, and writes one merged category file.
-   Adult keeps `hosts/merged_hosts.txt`; other categories use
-   `hosts/<category>.txt`.
+   `whitelist.txt`, deduplicates/sorts, and writes `hosts/<category>.txt`.
 4. `split_hosts.py` stages a complete new chunk set, publishes it, then removes
-   stale numeric chunks. Adult chunks remain `hosts00`, `hosts01`, ...; other
-   categories use `<category>-hosts00`, ... .
+   stale numeric chunks. Chunks use `<category>-hosts00`, ... .
 
 ## Conventions
 

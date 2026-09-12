@@ -57,11 +57,11 @@ def test_category_manifest_prevents_stale_downloads_from_being_merged(tmp_path: 
     assert files == [current]
 
 
-def test_default_category_output_names_preserve_adult_compatibility(tmp_path: Path):
+def test_default_category_output_names_are_explicit(tmp_path: Path):
     config = dict(utils.DEFAULTS)
     config["OUTPUT_DIR"] = str(tmp_path)
-    assert merge_hosts.default_output_path("adult", config) == tmp_path / "merged_hosts.txt"
-    assert merge_hosts.default_split_prefix("adult", config) == "hosts"
+    assert merge_hosts.default_output_path("adult", config) == tmp_path / "adult.txt"
+    assert merge_hosts.default_split_prefix("adult", config) == "adult-hosts"
     assert merge_hosts.default_output_path("gaming", config) == tmp_path / "gaming.txt"
     assert merge_hosts.default_split_prefix("gaming", config) == "gaming-hosts"
 
@@ -155,9 +155,10 @@ def test_full_pipeline_round_trip(tmp_path: Path):
     merged = out_dir / "merged.txt"
     assert merged.is_file()
 
-    chunks = split_hosts.find_chunks(out_dir, "hosts")
+    chunks = split_hosts.find_chunks(out_dir, "adult-hosts")
     assert len(chunks) > 1
     assert all(chunk.stat().st_size <= 524 for chunk in chunks)
+    assert not (out_dir / "hosts00").exists()
 
     payload = [line for line in merged.read_text().splitlines() if not line.startswith("#")]
     assert payload == [f"127.0.0.1 {domain}" for domain in expected]
