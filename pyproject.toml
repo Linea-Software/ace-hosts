@@ -1,7 +1,7 @@
 [project]
 name = "ace-hosts"
 version = "0.1.0"
-description = "Download, merge, deduplicate and split host lists for DNS-based blocking (Python successor of the columndeeply/hosts tooling)"
+description = "Download, merge, deduplicate and package host lists for DNS-based blocking (Python successor of the columndeeply/hosts tooling)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -22,12 +22,13 @@ dependencies = [
     "python-dotenv==1.2.3",
     "requests==2.34.2",
     "tqdm==4.70.0",
+    "xxhash==4.0.1",
 ]
 
 [project.scripts]
 ace-hosts-download = "scripts.download_sources:main"
 ace-hosts-merge = "scripts.merge_hosts:main"
-ace-hosts-split = "scripts.split_hosts:main"
+ace-hosts-build-site-packs = "scripts.build_site_packs:main"
 
 [dependency-groups]
 dev = [

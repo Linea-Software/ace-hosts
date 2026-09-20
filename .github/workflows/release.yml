@@ -33,8 +33,14 @@ jobs:
       - name: Clean output
         run: rm -f hosts/*
 
-      - name: Merge and split
-        run: uv run python scripts/merge_hosts.py --all-categories --split --no-progress
+      - name: Merge categories
+        run: uv run python scripts/merge_hosts.py --all-categories --no-progress
+
+      - name: Build Ace site packs
+        run: uv run python scripts/build_site_packs.py
+
+      - name: Validate release asset sizes
+        run: uv run python scripts/validate_release_assets.py hosts
 
       - name: Generate checksums
         working-directory: hosts
@@ -47,7 +53,7 @@ jobs:
           Automated monthly build of the Ace category blocklists.
 
           - Generated: ${generated}
-          - Assets: <category>.txt and <category>-hosts00..NN
+          - Assets: <category>.txt and site-pack-*.zip
 
           Unique domains by category:
           EOF

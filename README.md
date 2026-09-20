@@ -7,8 +7,8 @@
 
 **Category-specific DNS blocklists for distracting and addictive websites, rebuilt monthly.**
 
-`ace-hosts` downloads, normalizes, merges, deduplicates and splits upstream
-host/domain lists into ready-to-use hosts files. It started as a successor to
+`ace-hosts` downloads, normalizes, merges, deduplicates and packages upstream
+host/domain lists into ready-to-use hosts files and Ace Engine site-pack ZIPs. It started as a successor to
 the maintenance tooling of the deleted
 [`columndeeply/hosts`](https://github.com/columndeeply/hosts) adult blocklist,
 but now builds independent lists for:
@@ -26,10 +26,10 @@ The categories stay separate end-to-end: sources download into
 `downloads/<category>/`, each merge consumes only that category's successful
 source manifest, and each release asset has an unambiguous category name.
 
-Every category uses an explicit asset name. Compact adult artifacts are
-`adult.txt`, `adult-hosts00`, ...; extended adult artifacts are
-`adult-extended.txt`, `adult-extended-hosts00`, ... . The old ambiguous
-`merged_hosts.txt`, `hosts00`, and `hosts01` release assets are no longer produced.
+Every category is published as one merged file, for example `adult.txt`,
+`adult-extended.txt`, `gaming.txt`, and `social.txt`. Ace-managed categories also
+produce one SQLite backup ZIP such as `site-pack-adult-free.zip` or
+`site-pack-gaming-free.zip`. Chunked release assets are no longer produced.
 
 ## Features
 
@@ -44,8 +44,8 @@ Every category uses an explicit asset name. Compact adult artifacts are
   than blindly merging old files left in the directory.
 - **Whitelist support** via `whitelist.txt`.
 - **Deterministic output** through deduplication and sorting.
-- **GitHub-friendly chunks** below 90 MiB by default, with repeated headers so
-  every chunk is independently usable.
+- **Whole-file releases** — merged lists and site-pack ZIPs are never split;
+  release validation fails if any generated asset exceeds 2 GiB.
 - **Deterministic environment** through exact direct dependency pins and the
   committed `uv.lock`.
 
@@ -68,29 +68,30 @@ Build every category:
 
 ```bash
 uv run python scripts/download_sources.py --all-categories
-uv run python scripts/merge_hosts.py --all-categories --split
+uv run python scripts/merge_hosts.py --all-categories
+uv run python scripts/build_site_packs.py
 ```
 
 Or build one category:
 
 ```bash
 uv run python scripts/download_sources.py --category gaming
-uv run python scripts/merge_hosts.py --category gaming --split
+uv run python scripts/merge_hosts.py --category gaming
 ```
 
 The default remains `adult`, so the original commands still work:
 
 ```bash
 uv run python scripts/download_sources.py
-uv run python scripts/merge_hosts.py --split
+uv run python scripts/merge_hosts.py
 ```
 
 Installed console commands are equivalent:
 
 ```bash
 ace-hosts-download --all-categories
-ace-hosts-merge --all-categories --split
-ace-hosts-split --check
+ace-hosts-merge --all-categories
+ace-hosts-build-site-packs
 ```
 
 Typical output:
@@ -98,26 +99,24 @@ Typical output:
 ```text
 hosts/
 ├── adult.txt
-├── adult-hosts00
 ├── adult-extended.txt
-├── adult-extended-hosts00
-├── adult-extended-hosts01
 ├── gaming.txt
-├── gaming-hosts00
 ├── social.txt
-├── social-hosts00
 ├── gambling.txt
-├── gambling-hosts00
 ├── streaming.txt
-├── streaming-hosts00
 ├── dating.txt
-├── dating-hosts00
 ├── shopping.txt
-├── shopping-hosts00
+├── site-pack-adult-free.zip
+├── site-pack-adult-pro.zip
+├── site-pack-gaming-free.zip
+├── site-pack-social-free.zip
+├── site-pack-gambling-pro.zip
+├── site-pack-streaming-pro.zip
+├── site-pack-shopping-pro.zip
 └── sha256_checksums.txt   # release workflow
 ```
 
-The number of chunks depends on the current upstream data.
+Each `site-pack-*.zip` contains exactly one `pack.db` SQLite database.
 
 ## Pipeline
 
@@ -128,8 +127,10 @@ flowchart LR
     C --> D[merge_hosts.py]
     D --> E[dedupe + whitelist + sort]
     E --> F[category merged file]
-    F --> G[split_hosts.py]
-    G --> H[category chunks]
+    F --> G[build_site_packs.py]
+    G --> H[site-pack ZIP with pack.db]
+    F --> I[validate_release_assets.py]
+    H --> I
 ```
 
 ## CLI
@@ -160,29 +161,26 @@ names are sanitized before they are used as local filenames.
 | `--no-dedupe` | Keep duplicates |
 | `--no-sort` | Preserve merge order |
 | `--normalize-ip IP` | Hosts-file IP prefix; default `127.0.0.1` |
-| `--split` | Split the merged output after writing it |
-| `--split-mb MIB` | Maximum chunk size; default `90` |
-| `--split-prefix NAME` | Override chunk prefix; single-category mode only |
 | `--no-progress` | Disable progress bars |
 
 Automatic input selection prefers the downloader's success manifest, then
 falls back to files under `downloads/<category>/`.
 
-### `split_hosts.py`
+### `build_site_packs.py`
 
-| Flag | Description |
-| --- | --- |
-| `--input PATH` | Merged file to split; default `hosts/adult.txt` |
-| `--output-dir PATH` | Chunk output directory |
-| `--max-mb MIB` | Maximum chunk size |
-| `--prefix NAME` | Chunk prefix |
-| `--check` | Verify existing numeric-suffix chunks instead of splitting |
-| `--no-progress` | Disable progress bars |
+Builds Ace Engine-compatible SQLite backups from merged category files. Each
+output is one `site-pack-*.zip` containing a single `pack.db`. The database uses
+Ace's XXH3-64 host hashing convention and the engine's current `entries` and
+`pack_meta` schema.
 
-Splitting first stages the complete new chunk set in a temporary directory,
-then publishes it and removes stale numeric chunks from older builds. Chunk
-size accounting includes the complete per-chunk header, including chunk
-numbers wider than two digits.
+Use `--pack PACK_ID` to build a subset, `--hosts-dir PATH` to read merged inputs
+from another directory, and `--output-dir PATH` to choose the ZIP destination.
+
+### `validate_release_assets.py`
+
+Validates the generated release directory and exits with an error when any file
+is larger than 2 GiB. The release workflow runs this check before checksums and
+publication.
 
 ## Built-in categories and sources
 
@@ -243,12 +241,10 @@ All keys are optional and may be supplied through `.env` or the environment.
 | --- | --- | --- |
 | `SOURCES` | *(built-in category sources)* | Custom sources for one category |
 | `DOWNLOAD_DIR` | `downloads` | Base raw-download directory |
-| `OUTPUT_DIR` | `hosts` | Merged/chunk output directory |
+| `OUTPUT_DIR` | `hosts` | Merged output directory |
 | `MERGED_FILENAME` | `adult.txt` | Default adult merged filename |
 | `WHITELIST_FILE` | `whitelist.txt` | Domains excluded from merges |
 | `INPUT_FILES` | *(empty)* | Explicit single-category inputs/globs |
-| `SPLIT_CHUNK_MB` | `90` | Chunk size in MiB |
-| `SPLIT_PREFIX` | `adult-hosts` | Default adult chunk prefix |
 | `REMOVE_DUPLICATES` | `true` | Deduplicate domains |
 | `SORT_OUTPUT` | `true` | Sort output |
 | `NORMALIZE_IP` | `127.0.0.1` | Hosts-file IP prefix |
@@ -262,25 +258,19 @@ All keys are optional and may be supplied through `.env` or the environment.
 ## Releases
 
 The GitHub `Release` workflow runs on the first day of every month at 03:00
-UTC. It downloads all categories, rebuilds the merged files/chunks, creates
-`sha256_checksums.txt`, and publishes every output under a `vYYYY.MM.DD` tag.
+UTC. It downloads all categories, rebuilds the merged files and Ace site-pack
+ZIPs, rejects any asset larger than 2 GiB, creates `sha256_checksums.txt`, and
+publishes every output under a `vYYYY.MM.DD` tag.
 
-Adult release assets expose both variants with explicit names:
+Release assets expose whole merged lists plus ready-to-consume Ace site packs:
 
 ```text
 https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult.txt
-https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult-hosts00
 https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult-extended.txt
-https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult-extended-hosts00
-```
-
-Other categories follow the same pattern, for example:
-
-```text
 https://github.com/Linea-Software/ace-hosts/releases/latest/download/gaming.txt
-https://github.com/Linea-Software/ace-hosts/releases/latest/download/gaming-hosts00
-https://github.com/Linea-Software/ace-hosts/releases/latest/download/social.txt
-https://github.com/Linea-Software/ace-hosts/releases/latest/download/gambling.txt
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/site-pack-adult-free.zip
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/site-pack-adult-pro.zip
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/site-pack-gaming-free.zip
 ```
 
 ## Development

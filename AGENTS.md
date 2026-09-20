@@ -1,12 +1,11 @@
 # ace-hosts — Project Overview
 
 **ace-hosts** is a Python pipeline that downloads, merges, deduplicates and
-splits category-specific host lists for DNS-based blocking. It began as a
+packages category-specific host lists for DNS-based blocking. It began as a
 reimplementation of the archived [`columndeeply/hosts`](https://github.com/columndeeply/hosts)
 adult-list tooling and now builds separate compact adult, extended adult,
-gaming, social, gambling, streaming, dating and shopping lists. Every release
-asset is category-prefixed:
-`adult.txt`, `adult-hosts00`, `gaming.txt`, `gaming-hosts00`, ... .
+gaming, social, gambling, streaming, dating and shopping lists plus
+Ace Engine-compatible SQLite site-pack ZIPs.
 
 This project lives inside the `ace-project` monorepo directory but is a
 **standalone git repository** (`C:\Projects\ace-project\ace-hosts`).
@@ -22,7 +21,7 @@ by LLMs — do not remove it.
 | Language          | Python 3.10+ (builtin generics, `X | None` syntax)    |
 | Package manager   | uv (project interface; `uv.lock` committed)           |
 | Build backend     | hatchling (wheel package = `scripts/`)                |
-| Runtime deps      | requests, tqdm, python-dotenv (exact `==` pins)       |
+| Runtime deps      | requests, tqdm, python-dotenv, xxhash (exact `==` pins) |
 | Dev deps          | pytest, basedpyright (exact `==` pins)                |
 | CI                | GitHub Actions (compileall, basedpyright, pytest, smoke test) |
 
@@ -39,8 +38,9 @@ ace-hosts/
 │   ├── source_catalog.py    # Categories, upstream URLs and license metadata
 │   ├── utils.py             # Parsing, validation, config, logging, atomic writes
 │   ├── download_sources.py  # Atomic category downloads + success manifests
-│   ├── merge_hosts.py       # Category merge/dedupe/whitelist/sort (+ split)
-│   └── split_hosts.py       # Size-bounded chunks + stale-chunk cleanup
+│   ├── merge_hosts.py       # Category merge/dedupe/whitelist/sort
+│   ├── build_site_packs.py  # Ace-compatible SQLite pack.db ZIP generation
+│   └── validate_release_assets.py # 2 GiB release-asset guard
 ├── tests/                   # pytest suite — must never touch the network
 ├── hosts/                   # Generated output — gitignored
 ├── downloads/               # Raw category downloads — gitignored
@@ -58,13 +58,14 @@ Always use `uv` — never bare `pip`/`python` outside the project environment.
 | `uv run pytest` | Run tests |
 | `uv run basedpyright` | Type check; must be 0 errors, 0 warnings |
 | `uv run python scripts/download_sources.py --all-categories` | Fetch every built-in category |
-| `uv run python scripts/merge_hosts.py --all-categories --split` | Build every category and chunks |
-| `uv run python scripts/split_hosts.py --check` | Verify adult chunks |
+| `uv run python scripts/merge_hosts.py --all-categories` | Build every category as one merged file |
+| `uv run python scripts/build_site_packs.py` | Build Ace Engine-compatible site-pack ZIPs |
+| `uv run python scripts/validate_release_assets.py hosts` | Fail if any release asset exceeds 2 GiB |
 | `uv audit` | Check lockfile against OSV advisories |
 | `uv add <package>` / `uv remove <package>` | Maintainers only: change direct dependencies |
 
-Console scripts (`ace-hosts-download`, `ace-hosts-merge`, `ace-hosts-split`)
-are installed as entry points into `scripts.*:main`.
+Console scripts (`ace-hosts-download`, `ace-hosts-merge`,
+`ace-hosts-build-site-packs`) are installed as entry points into `scripts.*:main`.
 
 ## Pipeline
 
@@ -74,9 +75,12 @@ are installed as entry points into `scripts.*:main`.
    published. A per-category `.ace-hosts-sources` manifest lists only sources
    that succeeded in the current run.
 3. `merge_hosts.py` follows that manifest, parses inputs line-by-line, applies
-   `whitelist.txt`, deduplicates/sorts, and writes `hosts/<category>.txt`.
-4. `split_hosts.py` stages a complete new chunk set, publishes it, then removes
-   stale numeric chunks. Chunks use `<category>-hosts00`, ... .
+   `whitelist.txt`, deduplicates/sorts, and writes one `hosts/<category>.txt`.
+4. `build_site_packs.py` hashes merged domains with XXH3-64, writes the exact
+   Ace Engine `entries`/`pack_meta` SQLite schema, and publishes one
+   `site-pack-*.zip` containing `pack.db` for each managed pack.
+5. `validate_release_assets.py` rejects any generated release file larger than
+   2 GiB before GitHub release publication.
 
 ## Conventions
 
@@ -86,8 +90,8 @@ are installed as entry points into `scripts.*:main`.
   - `reportUnusedCallResult = false` in `[tool.basedpyright]` is intentional.
   - Use `X | None`, `collections.abc.Iterable` / `Iterator`, and typed
     `argparse.Namespace` subclasses.
-- **Dual-mode scripts:** executable scripts must run directly and as installed
-  package entry points. Keep the `__package__` bootstrap on the three CLI files.
+- **Dual-mode scripts:** executable scripts that import the `scripts` package
+  must run directly and as installed entry points; keep the `__package__` bootstrap.
 - **Atomic writes:** generated text outputs go through
   `utils.atomic_write_lines`; downloads must also stage before `os.replace`.
 - **Generated files:** never commit/edit generated `hosts/*` or `downloads/*`.
@@ -95,20 +99,20 @@ are installed as entry points into `scripts.*:main`.
   `scripts/source_catalog.py`, not scattered through CLI modules.
 - **Memory:** stream source files line-by-line. The normal dedupe path holds one
   set of domains in memory; do not load entire source files separately.
-- **Compatibility:** never rename the adult release assets without tracing and
-  updating ace-engine/ace-app consumers first.
+- **Compatibility:** release asset names are consumed by ace-engine and
+  ace-blocker-site; trace cross-repo consumers before renaming `.txt` or
+  `site-pack-*.zip` artifacts.
 - **Licensing:** MIT covers this repository's source code, not automatically the
   third-party generated datasets. Keep source-license metadata/documentation.
 - **i18n:** none — CLI output is English.
 
 ## Known Pitfalls
 
-- `split_hosts.split_file` must reset `current_size` after every flush. The
-  packing regression is guarded by `test_split_file_produces_small_sequential_chunks`.
-- Chunk-size accounting includes all repeated headers and must use the actual
-  chunk index (header width grows beyond chunk 99).
-- Split rebuilds must remove stale old numeric chunks only after the new set has
-  been staged successfully.
+- Site-pack databases must stay byte-for-byte compatible at the schema/hash
+  contract level with ace-engine: XXH3-64 hashes stored as signed SQLite INTEGERs,
+  `format_version = 1.0`, and a ZIP entry named exactly `pack.db`.
+- GitHub release assets are intentionally unsplit. The release workflow must fail
+  before publication if any generated file is larger than 2 GiB.
 - Windows shells do not expand globs; `resolve_input_files()` expands them.
 - Automatic merging must prefer the success manifest so failed/removed sources
   from older runs cannot silently reappear.
@@ -122,11 +126,11 @@ are installed as entry points into `scripts.*:main`.
 ## Testing
 
 - `uv run pytest` covers parsing, source/catalog handling, failed-download
-  cleanup, category manifests, merge/whitelist behavior, chunk size/naming,
-  stale-chunk cleanup and round trips.
+  cleanup, category manifests, merge/whitelist behavior, site-pack schema/hash
+  compatibility, release-size validation and round trips.
 - Tests never touch the network or depend on existing `downloads/` contents.
 - `uv run basedpyright` must report 0 errors and 0 warnings.
-- CI additionally runs compileall and a merge+split smoke test.
+- CI additionally runs compileall and a merge/site-pack smoke test.
 
 ## Git
 

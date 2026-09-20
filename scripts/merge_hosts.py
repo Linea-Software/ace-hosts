@@ -14,7 +14,7 @@ from tqdm import tqdm
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts import source_catalog, split_hosts, utils
+from scripts import source_catalog, utils
 
 logger = logging.getLogger("ace-hosts.merge")
 
@@ -130,13 +130,6 @@ def default_output_path(category: str, config: dict[str, str]) -> Path:
     return output_dir / f"{category}.txt"
 
 
-def default_split_prefix(category: str, config: dict[str, str]) -> str:
-    """Return a category-specific chunk prefix."""
-    if category == source_catalog.DEFAULT_CATEGORY:
-        return config["SPLIT_PREFIX"]
-    return f"{category}-hosts"
-
-
 class MergeArgs(argparse.Namespace):
     """Typed arguments for the merge CLI (see main())."""
 
@@ -149,9 +142,6 @@ class MergeArgs(argparse.Namespace):
     no_sort: bool = False
     normalize_ip: str | None = None
     no_progress: bool = False
-    split: bool = False
-    split_mb: float | None = None
-    split_prefix: str | None = None
 
 
 def _merge_category(
@@ -198,17 +188,6 @@ def _merge_category(
     logger.info("%s stats: %s", category, stats)
     del domains
 
-    if args.split:
-        max_mb = args.split_mb if args.split_mb is not None else float(config["SPLIT_CHUNK_MB"])
-        prefix = args.split_prefix or default_split_prefix(category, config)
-        chunks = split_hosts.split_file(
-            out_path,
-            out_path.parent,
-            max_mb=max_mb,
-            prefix=prefix,
-            show_progress=not args.no_progress,
-        )
-        logger.info("%s: created %d chunk(s) in %s", category, len(chunks), out_path.parent)
     return 0
 
 
@@ -231,15 +210,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-sort", action="store_true", help="do not sort the merged list")
     parser.add_argument("--normalize-ip", metavar="IP", help="IP prefix for every line (default: $NORMALIZE_IP)")
     parser.add_argument("--no-progress", action="store_true", help="disable progress bars")
-    parser.add_argument("--split", action="store_true", help="split each merged file into chunks afterwards")
-    parser.add_argument("--split-mb", type=float, metavar="MIB", help="max chunk size in MiB (default: $SPLIT_CHUNK_MB)")
-    parser.add_argument("--split-prefix", metavar="NAME", help="chunk filename prefix (single category only)")
     args: MergeArgs = parser.parse_args(argv, namespace=MergeArgs())
 
     config = utils.load_config()
     utils.setup_logging(config["LOG_LEVEL"])
-    if args.all_categories and (args.input or args.output or args.split_prefix or config.get("INPUT_FILES", "").strip()):
-        parser.error("--all-categories cannot be combined with --input, --output, --split-prefix, or INPUT_FILES")
+    if args.all_categories and (args.input or args.output or config.get("INPUT_FILES", "").strip()):
+        parser.error("--all-categories cannot be combined with --input, --output, or INPUT_FILES")
 
     whitelist_path = Path(args.whitelist) if args.whitelist else Path(config["WHITELIST_FILE"])
     if not whitelist_path.is_absolute():

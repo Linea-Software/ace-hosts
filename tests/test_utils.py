@@ -99,12 +99,11 @@ def test_config_bool():
     assert not utils.config_bool("")
 
 
-def test_hosts_header_and_chunk_header():
+def test_hosts_header():
     header = utils.hosts_header(42, ["one", "two"])
     assert header[0].startswith("#")
     assert any("Entries: 42" in line for line in header)
     assert any("Sources: one, two" in line for line in header)
-    assert utils.chunk_header(3) == ["# ace-hosts blocklist - chunk 03"]
 
 
 def test_category_header_carries_category_and_source_licenses():
