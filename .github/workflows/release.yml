@@ -54,6 +54,7 @@ jobs:
 
           for entry in \
             "adult:hosts/adult.txt" \
+            "adult-extended:hosts/adult-extended.txt" \
             "gaming:hosts/gaming.txt" \
             "social:hosts/social.txt" \
             "gambling:hosts/gambling.txt" \

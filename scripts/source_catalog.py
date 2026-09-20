@@ -19,7 +19,8 @@ class Source:
 
 
 CATEGORY_DESCRIPTIONS: dict[str, str] = {
-    "adult": "Adult and pornographic websites",
+    "adult": "Compact adult and pornographic websites list",
+    "adult-extended": "Extended adult and pornographic websites list",
     "gaming": "Online games, game portals, publishers and gaming services",
     "social": "Social networks and major social/messaging platforms",
     "gambling": "Gambling, betting and casino websites",
@@ -33,6 +34,20 @@ CATEGORY_DESCRIPTIONS: dict[str, str] = {
 # over-blocking and make a category's meaning impossible to reason about.
 CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
     "adult": (
+        Source(
+            "stevenblack-porn",
+            "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts",
+            "mixed upstream licenses; see StevenBlack/hosts",
+            "https://github.com/StevenBlack/hosts",
+        ),
+        Source(
+            "hagezi-nsfw",
+            "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/nsfw-onlydomains.txt",
+            "GPL-3.0",
+            "https://github.com/hagezi/dns-blocklists",
+        ),
+    ),
+    "adult-extended": (
         Source(
             "stevenblack-porn",
             "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts",

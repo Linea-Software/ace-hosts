@@ -3,8 +3,9 @@
 **ace-hosts** is a Python pipeline that downloads, merges, deduplicates and
 splits category-specific host lists for DNS-based blocking. It began as a
 reimplementation of the archived [`columndeeply/hosts`](https://github.com/columndeeply/hosts)
-adult-list tooling and now builds separate adult, gaming, social, gambling,
-streaming, dating and shopping lists. Every release asset is category-prefixed:
+adult-list tooling and now builds separate compact adult, extended adult,
+gaming, social, gambling, streaming, dating and shopping lists. Every release
+asset is category-prefixed:
 `adult.txt`, `adult-hosts00`, `gaming.txt`, `gaming-hosts00`, ... .
 
 This project lives inside the `ace-project` monorepo directory but is a
@@ -111,8 +112,8 @@ are installed as entry points into `scripts.*:main`.
 - Windows shells do not expand globs; `resolve_input_files()` expands them.
 - Automatic merging must prefer the success manifest so failed/removed sources
   from older runs cannot silently reappear.
-- The adult category accepts the old flat `downloads/*` layout only as a
-  backward-compatibility fallback when `downloads/adult/` is absent.
+- Category downloads are isolated under `downloads/<category>/`; there is no
+  legacy flat adult-download fallback.
 - Sources go stale; dead URLs are tolerated individually but the source catalog
   and README must be kept current.
 - Local Python may be newer than the declared Python 3.10 minimum; do not use

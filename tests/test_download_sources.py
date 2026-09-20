@@ -57,9 +57,15 @@ def test_default_sources_all_look_like_urls():
 
 def test_catalog_contains_product_categories():
     categories = set(source_catalog.category_names())
-    assert {"adult", "gaming", "social", "gambling"} <= categories
+    assert {"adult", "adult-extended", "gaming", "social", "gambling"} <= categories
     assert {"streaming", "dating", "shopping"} <= categories
-    assert "porn-only" in source_catalog.sources_for_category("adult")["stevenblack-porn"]
+    assert source_catalog.sources_for_category("adult") == {
+        "stevenblack-porn": "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts",
+        "hagezi-nsfw": "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/nsfw-onlydomains.txt",
+    }
+    assert len(source_catalog.sources_for_category("adult-extended")) > len(
+        source_catalog.sources_for_category("adult")
+    )
 
 
 def test_download_path_is_safe_and_does_not_duplicate_extension(tmp_path: Path):

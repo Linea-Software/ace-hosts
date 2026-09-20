@@ -40,9 +40,7 @@ def resolve_input_files(
     """Determine the files to merge for one category.
 
     Priority: explicit ``--input`` > ``INPUT_FILES`` > the downloader manifest
-    for ``downloads/<category>`` > files in that category directory. For the
-    adult category only, a flat legacy ``downloads/*`` layout is accepted when
-    ``downloads/adult`` does not yet exist.
+    for ``downloads/<category>`` > files in that category directory.
     """
     candidates = list(patterns)
     if not candidates and config.get("INPUT_FILES", "").strip():
@@ -53,10 +51,6 @@ def resolve_input_files(
         manifest_inputs = _manifest_inputs(category_dir)
         if manifest_inputs is not None:
             candidates = manifest_inputs
-        elif category_dir.is_dir():
-            candidates = [str(category_dir / "*")]
-        elif category == source_catalog.DEFAULT_CATEGORY:
-            candidates = [str(download_dir / "*")]
         else:
             candidates = [str(category_dir / "*")]
 

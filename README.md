@@ -13,7 +13,8 @@ the maintenance tooling of the deleted
 [`columndeeply/hosts`](https://github.com/columndeeply/hosts) adult blocklist,
 but now builds independent lists for:
 
-- **adult** — pornography / NSFW sites
+- **adult** — compact pornography / NSFW list for the default/free pack
+- **adult-extended** — full multi-source adult list for the extended/Pro pack
 - **gaming** — online games, gaming portals and major gaming services
 - **social** — social networks and major social/messaging platforms
 - **gambling** — betting, casinos and gambling sites
@@ -25,13 +26,14 @@ The categories stay separate end-to-end: sources download into
 `downloads/<category>/`, each merge consumes only that category's successful
 source manifest, and each release asset has an unambiguous category name.
 
-Every category uses an explicit asset name. Adult artifacts are `adult.txt`,
-`adult-hosts00`, `adult-hosts01`, ...; the old ambiguous `merged_hosts.txt`,
-`hosts00`, and `hosts01` release assets are no longer produced.
+Every category uses an explicit asset name. Compact adult artifacts are
+`adult.txt`, `adult-hosts00`, ...; extended adult artifacts are
+`adult-extended.txt`, `adult-extended-hosts00`, ... . The old ambiguous
+`merged_hosts.txt`, `hosts00`, and `hosts01` release assets are no longer produced.
 
 ## Features
 
-- **Seven behavioural categories** with a central source catalog in
+- **Eight behavioural categories** with a central source catalog in
   `scripts/source_catalog.py`.
 - **Format-tolerant parsing** for classic hosts files, bare domains, Adblock
   syntax (`||domain^`), wildcards, URLs, inline comments, BOMs and CRLF.
@@ -97,7 +99,9 @@ Typical output:
 hosts/
 ├── adult.txt
 ├── adult-hosts00
-├── adult-hosts01
+├── adult-extended.txt
+├── adult-extended-hosts00
+├── adult-extended-hosts01
 ├── gaming.txt
 ├── gaming-hosts00
 ├── social.txt
@@ -161,9 +165,8 @@ names are sanitized before they are used as local filenames.
 | `--split-prefix NAME` | Override chunk prefix; single-category mode only |
 | `--no-progress` | Disable progress bars |
 
-Automatic input selection prefers the downloader's success manifest. For
-backward compatibility, the adult category also accepts the old flat
-`downloads/*` layout if `downloads/adult/` does not exist yet.
+Automatic input selection prefers the downloader's success manifest, then
+falls back to files under `downloads/<category>/`.
 
 ### `split_hosts.py`
 
@@ -189,7 +192,8 @@ mixed into these categories.
 
 | Category | Built-in sources |
 | --- | --- |
-| adult | StevenBlack `porn-only`; Block List Project porn; 4skinSkywalker Anti-Porn; tiuxo porn; saskuu porno; StbanMc CommunityBlocklists porn; zangadoprojets Pornpages; HaGeZi NSFW; Sinfonietta pornography; chadmayfield porn; Energized Porn |
+| adult | StevenBlack `porn-only`; HaGeZi NSFW |
+| adult-extended | StevenBlack `porn-only`; Block List Project porn; 4skinSkywalker Anti-Porn; tiuxo porn; saskuu porno; StbanMc CommunityBlocklists porn; zangadoprojets Pornpages; HaGeZi NSFW; Sinfonietta pornography; chadmayfield porn; Energized Porn |
 | gaming | UT1 `games`; Block List Project Fortnite |
 | social | StevenBlack `social-only`; UT1 `social_networks`; Block List Project Facebook, TikTok, Twitter/X and WhatsApp |
 | gambling | Block List Project gambling; StevenBlack `gambling-only`; UT1 `gambling` |
@@ -209,12 +213,14 @@ but fails if no selected source succeeds.
   project publishes the data under CC BY-SA 4.0; `ace-hosts` consumes the daily
   GitHub mirror maintained by `olbat/ut1-blacklists`.
 - **Block List Project** supplies dedicated category/service lists including
-  porn, gambling, Facebook, TikTok, Twitter/X, WhatsApp, YouTube and Fortnite.
+  gambling, Facebook, TikTok, Twitter/X, WhatsApp, YouTube and Fortnite.
 - **StevenBlack/hosts** supplies separate extension-only lists for porn, social
   and gambling. `ace-hosts` deliberately uses those category-only variants —
   not StevenBlack's general adware/malware base list.
-- The adult category retains several additional specialist sources to preserve
-  the coverage of the original project.
+- The `adult` category is intentionally compact: StevenBlack's porn-only list
+  plus HaGeZi's NSFW-only domains back the default/free Ace adult site pack.
+- The `adult-extended` category retains the previous multi-source adult catalog
+  for the extended/Pro site pack.
 
 ## Licensing of generated data
 
@@ -259,12 +265,13 @@ The GitHub `Release` workflow runs on the first day of every month at 03:00
 UTC. It downloads all categories, rebuilds the merged files/chunks, creates
 `sha256_checksums.txt`, and publishes every output under a `vYYYY.MM.DD` tag.
 
-Adult release assets use the same explicit category naming as every other list:
+Adult release assets expose both variants with explicit names:
 
 ```text
 https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult.txt
 https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult-hosts00
-https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult-hosts01
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult-extended.txt
+https://github.com/Linea-Software/ace-hosts/releases/latest/download/adult-extended-hosts00
 ```
 
 Other categories follow the same pattern, for example:
