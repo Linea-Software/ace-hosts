@@ -42,7 +42,7 @@ produce one SQLite backup ZIP such as `site-pack-adult-free.zip` or
 - **Stale-source protection** — each download writes a manifest of sources that
   succeeded during that run; automatic merging follows the manifest rather
   than blindly merging old files left in the directory.
-- **Whitelist support** via `whitelist.txt`.
+- **Global whitelist support** via `whitelist.txt`, plus exact-domain **category exceptions** via `exceptions/<category>.txt`.
 - **Deterministic output** through deduplication and sorting.
 - **Whole-file releases** — merged lists and site-pack ZIPs are never split;
   release validation fails if any generated asset exceeds 2 GiB.
@@ -125,7 +125,7 @@ flowchart LR
     A[Built-in source catalog] --> B[download_sources.py]
     B --> C[downloads/category + success manifest]
     C --> D[merge_hosts.py]
-    D --> E[dedupe + whitelist + sort]
+    D --> E[dedupe + global whitelist + category exceptions + sort]
     E --> F[category merged file]
     F --> G[build_site_packs.py]
     G --> H[site-pack ZIP with pack.db]
@@ -157,7 +157,8 @@ names are sanitized before they are used as local filenames.
 | `--all-categories` | Merge every built-in category |
 | `--input PATH` | Explicit input file/glob, repeatable; single-category mode only |
 | `--output PATH` | Explicit merged output; single-category mode only |
-| `--whitelist PATH` | Domains to exclude |
+| `--whitelist PATH` | Global domains to exclude from every category |
+| `--exceptions-dir PATH` | Directory containing `<category>.txt` exact-domain exceptions |
 | `--no-dedupe` | Keep duplicates |
 | `--no-sort` | Preserve merge order |
 | `--normalize-ip IP` | Hosts-file IP prefix; default `127.0.0.1` |
@@ -165,6 +166,11 @@ names are sanitized before they are used as local filenames.
 
 Automatic input selection prefers the downloader's success manifest, then
 falls back to files under `downloads/<category>/`.
+
+`whitelist.txt` is intentionally global. Category-specific false positives
+belong in `exceptions/<category>.txt`; only exact hostnames are removed, so an
+exception for `sub.example.com` does not implicitly exempt `example.com` or
+other subdomains.
 
 ### `build_site_packs.py`
 
@@ -243,7 +249,8 @@ All keys are optional and may be supplied through `.env` or the environment.
 | `DOWNLOAD_DIR` | `downloads` | Base raw-download directory |
 | `OUTPUT_DIR` | `hosts` | Merged output directory |
 | `MERGED_FILENAME` | `adult.txt` | Default adult merged filename |
-| `WHITELIST_FILE` | `whitelist.txt` | Domains excluded from merges |
+| `WHITELIST_FILE` | `whitelist.txt` | Global domains excluded from every merge |
+| `EXCEPTIONS_DIR` | `exceptions` | Per-category exact-domain exception files |
 | `INPUT_FILES` | *(empty)* | Explicit single-category inputs/globs |
 | `REMOVE_DUPLICATES` | `true` | Deduplicate domains |
 | `SORT_OUTPUT` | `true` | Sort output |
@@ -290,7 +297,8 @@ not a unit-test dependency.
 - **False positives / missing domains:** open an issue or PR.
 - **New category/source:** edit `scripts/source_catalog.py` and document the
   upstream license/homepage.
-- **Whitelist:** add safe active domains to `whitelist.txt`.
+- **Global whitelist:** use `whitelist.txt` only for domains that should never appear in any category.
+- **Category false positive:** add the exact hostname to `exceptions/<category>.txt`.
 - **Generated files:** do not edit `hosts/*` or `downloads/*` by hand.
 
 ## License

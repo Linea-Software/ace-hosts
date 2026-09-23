@@ -1,0 +1,2 @@
+# Shared avatar/profile infrastructure used well beyond social networks.
+gravatar.com

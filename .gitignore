@@ -17,6 +17,7 @@ env/
 .ruff_cache/
 .coverage
 htmlcov/
+.ai-bridge/
 
 # ── Environment ───────────────────────────────────────────────────────
 # Local configuration (copy .env.example → .env). Never commit secrets.

@@ -1,0 +1,10 @@
+# Sexual-health, safety, and support resources incorrectly present in adult
+# upstream lists.
+centers.rainn.org
+roo.plannedparenthood.org
+scarleteen.com
+sexetc.org
+opendoors.nhs.uk
+
+# Shared AWS identity endpoint; blocking it can break unrelated authentication.
+cognito-identity.us-east-1.amazonaws.com

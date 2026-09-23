@@ -71,6 +71,59 @@ def test_merge_files_without_dedupe_keeps_duplicates(tmp_path: Path):
     assert stats["unique"] == 1
 
 
+def test_category_exceptions_are_isolated_and_global_whitelist_still_applies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    downloads = tmp_path / "downloads"
+    output = tmp_path / "hosts"
+    exceptions = tmp_path / "exceptions"
+    whitelist = _write(tmp_path, "whitelist.txt", "global-safe.example\n")
+
+    gaming_dir = downloads / "gaming"
+    _write(
+        gaming_dir,
+        "source.txt",
+        "category-safe.example\nglobal-safe.example\nblocked.example\n",
+    )
+    _write(gaming_dir, source_catalog.DOWNLOAD_MANIFEST, "source.txt\n")
+
+    social_dir = downloads / "social"
+    _write(
+        social_dir,
+        "source.txt",
+        "category-safe.example\nglobal-safe.example\nblocked.example\n",
+    )
+    _write(social_dir, source_catalog.DOWNLOAD_MANIFEST, "source.txt\n")
+    _write(exceptions, "gaming.txt", "category-safe.example # gaming-only exception\n")
+
+    monkeypatch.setenv("DOWNLOAD_DIR", str(downloads))
+    monkeypatch.setenv("OUTPUT_DIR", str(output))
+    monkeypatch.setenv("WHITELIST_FILE", str(whitelist))
+    monkeypatch.setenv("EXCEPTIONS_DIR", str(exceptions))
+
+    assert merge_hosts.main(["--category", "gaming", "--no-progress"]) == 0
+    assert merge_hosts.main(["--category", "social", "--no-progress"]) == 0
+
+    gaming_payload = {
+        line.split()[1]
+        for line in (output / "gaming.txt").read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    }
+    social_payload = {
+        line.split()[1]
+        for line in (output / "social.txt").read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    }
+
+    assert gaming_payload == {"blocked.example"}
+    assert social_payload == {"category-safe.example", "blocked.example"}
+
+
+def test_missing_category_exceptions_file_is_empty(tmp_path: Path):
+    assert merge_hosts.load_category_exceptions(tmp_path / "exceptions", "gaming") == set()
+
+
 def test_category_manifest_prevents_stale_downloads_from_being_merged(
     tmp_path: Path,
 ):

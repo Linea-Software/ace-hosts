@@ -75,6 +75,18 @@ def load_whitelist(path: Path | None) -> set[str]:
     return whitelist
 
 
+def load_category_exceptions(exceptions_dir: Path | None, category: str) -> set[str]:
+    """Load exact-domain exceptions that apply only to *category*."""
+    if exceptions_dir is None:
+        return set()
+    path = exceptions_dir / f"{category}.txt"
+    if not path.is_file():
+        return set()
+    exceptions = set(utils.iter_domains(path))
+    logger.info("%s exceptions: %d domain(s) from %s", category, len(exceptions), path)
+    return exceptions
+
+
 def merge_files(
     files: list[Path],
     whitelist_domains: set[str],
@@ -136,6 +148,7 @@ class MergeArgs(argparse.Namespace):
     input: list[str] | None = None
     output: str | None = None
     whitelist: str | None = None
+    exceptions_dir: str | None = None
     category: str = source_catalog.DEFAULT_CATEGORY
     all_categories: bool = False
     no_dedupe: bool = False
@@ -149,6 +162,7 @@ def _merge_category(
     args: MergeArgs,
     config: dict[str, str],
     whitelist_domains: set[str],
+    exceptions_dir: Path | None,
 ) -> int:
     files = resolve_input_files(args.input or [], config, category)
     if not files:
@@ -160,7 +174,9 @@ def _merge_category(
         return 1
 
     dedupe = not args.no_dedupe and utils.config_bool(config["REMOVE_DUPLICATES"])
-    domains, stats = merge_files(files, whitelist_domains, dedupe=dedupe, show_progress=not args.no_progress)
+    category_exceptions = load_category_exceptions(exceptions_dir, category)
+    excluded_domains = whitelist_domains | category_exceptions
+    domains, stats = merge_files(files, excluded_domains, dedupe=dedupe, show_progress=not args.no_progress)
     if not args.no_sort and utils.config_bool(config["SORT_OUTPUT"]):
         domains.sort()
 
@@ -205,7 +221,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--all-categories", action="store_true", help="merge every built-in category")
     parser.add_argument("--input", action="append", default=[], metavar="PATH", help="input file or glob (repeatable)")
     parser.add_argument("--output", metavar="PATH", help="merged output file (single category only)")
-    parser.add_argument("--whitelist", metavar="PATH", help="file with domains to exclude (default: $WHITELIST_FILE)")
+    parser.add_argument(
+        "--whitelist",
+        metavar="PATH",
+        help="global domains to exclude from every category (default: $WHITELIST_FILE)",
+    )
+    parser.add_argument(
+        "--exceptions-dir",
+        metavar="PATH",
+        help="directory containing <category>.txt exact-domain exceptions (default: $EXCEPTIONS_DIR)",
+    )
     parser.add_argument("--no-dedupe", action="store_true", help="keep duplicate domains")
     parser.add_argument("--no-sort", action="store_true", help="do not sort the merged list")
     parser.add_argument("--normalize-ip", metavar="IP", help="IP prefix for every line (default: $NORMALIZE_IP)")
@@ -222,10 +247,14 @@ def main(argv: list[str] | None = None) -> int:
         whitelist_path = utils.PROJECT_ROOT / whitelist_path
     whitelist_domains = load_whitelist(whitelist_path)
 
+    exceptions_dir = Path(args.exceptions_dir) if args.exceptions_dir else Path(config["EXCEPTIONS_DIR"])
+    if not exceptions_dir.is_absolute():
+        exceptions_dir = utils.PROJECT_ROOT / exceptions_dir
+
     categories = source_catalog.category_names() if args.all_categories else (args.category,)
     failed = False
     for category in categories:
-        if _merge_category(category, args, config, whitelist_domains) != 0:
+        if _merge_category(category, args, config, whitelist_domains, exceptions_dir) != 0:
             failed = True
     return 1 if failed else 0
 

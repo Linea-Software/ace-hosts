@@ -51,6 +51,7 @@ DEFAULTS: dict[str, str] = {
     "OUTPUT_DIR": "hosts",
     "MERGED_FILENAME": "adult.txt",
     "WHITELIST_FILE": "whitelist.txt",
+    "EXCEPTIONS_DIR": "exceptions",
     "INPUT_FILES": "",
     "REMOVE_DUPLICATES": "true",
     "SORT_OUTPUT": "true",
