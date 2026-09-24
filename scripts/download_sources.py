@@ -50,9 +50,14 @@ def parse_sources(raw: str, defaults: dict[str, str] | None = None) -> dict[str,
             name, _, url = entry.partition("=")
             url = url.strip()
             name = utils.sanitize_source_name(name.strip() or utils.sanitize_source_filename(url))
-            sources[name] = url
         else:
-            sources[utils.sanitize_source_name(utils.sanitize_source_filename(entry))] = entry
+            url = entry
+            name = utils.sanitize_source_name(utils.sanitize_source_filename(url))
+        if not url:
+            raise ValueError(f"source {name!r} has an empty URL")
+        if name in sources:
+            raise ValueError(f"duplicate source name after sanitization: {name}")
+        sources[name] = url
     return sources
 
 
@@ -62,6 +67,22 @@ def download_path(name: str, url: str, dest_dir: Path) -> Path:
     suffix = Path(url.split("?", 1)[0]).suffix or ".txt"
     filename = safe_name if Path(safe_name).suffix else f"{safe_name}{suffix}"
     return dest_dir / filename
+
+
+def _is_retryable_download_error(error: Exception) -> bool:
+    """Return whether *error* is likely to succeed on a later attempt."""
+    if isinstance(error, requests.HTTPError) and error.response is not None:
+        status = error.response.status_code
+        return status == 429 or status >= 500
+    return not isinstance(
+        error,
+        (
+            requests.exceptions.InvalidSchema,
+            requests.exceptions.InvalidURL,
+            requests.exceptions.MissingSchema,
+            requests.exceptions.URLRequired,
+        ),
+    )
 
 
 def download_source(
@@ -85,7 +106,9 @@ def download_source(
 
     headers = {"User-Agent": user_agent}
     last_error: Exception | None = None
+    attempts = 0
     for attempt in range(retries + 1):
+        attempts = attempt + 1
         fd, tmp_name = tempfile.mkstemp(prefix=dest.name + ".", suffix=".tmp", dir=str(dest_dir))
         try:
             with requests.get(url, stream=True, timeout=timeout, headers=headers) as response:
@@ -97,14 +120,13 @@ def download_source(
                     unit_scale=True,
                     desc=f"{name[:28]:<28}",
                     leave=False,
-                ) as progress:
-                    with os.fdopen(fd, "wb") as handle:
-                        fd = -1
-                        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-                            if not chunk:
-                                continue
-                            handle.write(chunk)
-                            progress.update(len(chunk))
+                ) as progress, os.fdopen(fd, "wb") as handle:
+                    fd = -1
+                    for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                        if not chunk:
+                            continue
+                        handle.write(chunk)
+                        progress.update(len(chunk))
             size = Path(tmp_name).stat().st_size
             if size == 0:
                 raise ValueError("empty response body")
@@ -118,7 +140,7 @@ def download_source(
                 os.unlink(tmp_name)
             except OSError:
                 pass
-            if attempt < retries:
+            if attempt < retries and _is_retryable_download_error(exc):
                 sleep_for = backoff * (2.0**attempt)
                 logger.warning(
                     "%s: download failed (%s); retrying in %.1fs (attempt %d/%d)",
@@ -129,7 +151,9 @@ def download_source(
                     retries,
                 )
                 time.sleep(sleep_for)
-    logger.error("%s: giving up after %d attempt(s): %s", name, retries + 1, last_error)
+            else:
+                break
+    logger.error("%s: giving up after %d attempt(s): %s", name, attempts, last_error)
     return None
 
 
@@ -238,11 +262,16 @@ def main(argv: list[str] | None = None) -> int:
     categories = source_catalog.category_names() if args.all_categories else (args.category,)
     delay = 0.0 if args.no_rate_limit else float(config["RATE_LIMIT_DELAY"])
     total_ok = 0
+    failed_categories: list[str] = []
     for category in categories:
         defaults = source_catalog.sources_for_category(category)
-        category_sources = parse_sources(custom_sources, defaults)
+        try:
+            category_sources = parse_sources(custom_sources, defaults)
+        except ValueError as error:
+            parser.error(str(error))
         if not category_sources:
             logger.error("%s: no sources configured", category)
+            failed_categories.append(category)
             continue
         ok_count, _, _ = _download_category(
             category,
@@ -255,9 +284,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.dry_run:
             continue
         total_ok += ok_count
+        if ok_count == 0:
+            failed_categories.append(category)
 
     if args.dry_run:
         return 0
+    if failed_categories:
+        logger.error(
+            "no sources succeeded for %d selected category/categories: %s",
+            len(failed_categories),
+            ", ".join(failed_categories),
+        )
+        return 1
     if total_ok == 0:
         logger.error("all selected sources failed; nothing to merge")
         return 1

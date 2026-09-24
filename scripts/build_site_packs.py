@@ -164,7 +164,9 @@ def build_site_pack(
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / definition.asset_name
 
-    with tempfile.TemporaryDirectory(prefix="ace-hosts-site-pack-") as temp_dir:
+    # Keep the staging ZIP on the destination filesystem so replace() remains
+    # an atomic publication even when the system temp directory is elsewhere.
+    with tempfile.TemporaryDirectory(prefix="ace-hosts-site-pack-", dir=output_dir) as temp_dir:
         db_path = Path(temp_dir) / "pack.db"
         build_pack_database(definition, hosts_file, db_path)
 

@@ -27,11 +27,13 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
-      - name: Smoke test (merge + split)
+      - name: Smoke test (merge + site pack)
         run: |
           mkdir -p .tmp-sources .tmp-out
           printf '0.0.0.0 alpha.example.com\n127.0.0.1 beta.example.org # inline comment\nbeta.example.org\n' > .tmp-sources/one.txt
           printf 'alpha.example.com\n||gamma.example.net^\n*.delta.example.io\n' > .tmp-sources/two.txt
-          uv run python scripts/merge_hosts.py --input .tmp-sources/one.txt --input .tmp-sources/two.txt --output .tmp-out/merged.txt --split --split-mb 1
-          ls -la .tmp-out/
-          uv run python scripts/split_hosts.py --input .tmp-out/merged.txt --output-dir .tmp-out --max-mb 1 --check
+          uv run python scripts/merge_hosts.py --input .tmp-sources/one.txt --input .tmp-sources/two.txt --output .tmp-out/adult.txt --no-progress
+          uv run python scripts/build_site_packs.py --hosts-dir .tmp-out --output-dir .tmp-out --pack pack-adult-free
+          uv run python scripts/validate_release_assets.py .tmp-out
+          test -s .tmp-out/adult.txt
+          test -s .tmp-out/site-pack-adult-free.zip
