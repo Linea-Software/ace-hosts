@@ -16,12 +16,12 @@ classifiers = [
     "Topic :: System :: Networking",
 ]
 # Direct dependencies are pinned exactly to the latest available versions
-# as of 2026-08-22 (resolved with `uv add`; re-run it to refresh). Transitive
+# as of 2026-10-10 (resolved with `uv add`; re-run it to refresh). Transitive
 # dependencies are resolved and locked deterministically in uv.lock.
 dependencies = [
-    "python-dotenv==1.2.3",
+    "python-dotenv==1.2.4",
     "requests==2.34.2",
-    "tqdm==4.70.0",
+    "tqdm==4.70.1",
     "xxhash==4.0.1",
 ]
 
@@ -32,7 +32,7 @@ ace-hosts-build-site-packs = "scripts.build_site_packs:main"
 
 [dependency-groups]
 dev = [
-    "basedpyright==1.39.10",
+    "basedpyright==1.40.2",
     "pytest==9.1.1",
 ]
 
