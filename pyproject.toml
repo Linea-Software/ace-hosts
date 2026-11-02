@@ -22,7 +22,7 @@ dependencies = [
     "python-dotenv==1.2.4",
     "requests==2.34.2",
     "tqdm==4.70.1",
-    "xxhash==4.0.1",
+    "xxhash==4.0.2",
 ]
 
 [project.scripts]
