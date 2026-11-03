@@ -22,7 +22,7 @@ dependencies = [
     "python-dotenv==1.2.4",
     "requests==2.34.2",
     "tqdm==4.70.1",
-    "xxhash==4.0.1",
+    "xxhash==4.0.2",
 ]
 
 [project.scripts]
@@ -33,7 +33,7 @@ ace-hosts-build-site-packs = "scripts.build_site_packs:main"
 [dependency-groups]
 dev = [
     "basedpyright==1.40.2",
-    "pytest==9.1.1",
+    "pytest==9.2.0",
 ]
 
 [tool.basedpyright]
