@@ -139,29 +139,28 @@ def _extended_domains(
     config: dict[str, str],
     excluded: set[str],
 ) -> tuple[list[str], dict[str, int]]:
-    """Publish Pro plus *validated* candidates, never merge the joined list raw."""
-    from scripts.anime_discovery import safe_hostname
+    """Publish Pro plus approved PR-merged seeds, never raw discovery findings."""
+    from scripts.anime_discovery import MIN_JOINED_DOMAINS, safe_hostname
 
     pro_path = default_output_path("anime-manga", config)
-    eligible_path = _configured_dir(config["DOWNLOAD_DIR"]) / "anime-discovery" / "eligible-extended.txt"
-    if not pro_path.is_file() or not eligible_path.is_file():
-        raise ValueError("Extended requires a fresh Pro merge and discovery eligibility report")
+    approvals_path = utils.PROJECT_ROOT / "seeds" / "anime-manga-extended.txt"
+    if not pro_path.is_file() or not approvals_path.is_file():
+        raise ValueError("Extended requires a fresh Pro merge and committed approvals")
     pro = set(utils.iter_domains(pro_path))
-    eligible = set(utils.iter_domains(eligible_path))
+    approved = set(utils.iter_domains(approvals_path))
     joined: set[str] = set()
+    # The reviewed seed is also in files; don't count it as an upstream download.
     for path in files:
-        joined.update(utils.iter_domains(path))
-    if not pro or not joined:
-        raise ValueError("Extended requires nonempty Pro and joined sources")
-    additional = eligible - pro
+        if path.resolve() != approvals_path.resolve():
+            joined.update(utils.iter_domains(path))
+    if not pro or len(joined) < MIN_JOINED_DOMAINS:
+        raise ValueError("Extended requires nonempty Pro and a complete joined download")
+    additional = approved - pro
     if len(additional) > max(3000, len(pro) // 2):
         raise ValueError("unexpected Extended growth requires manual review")
-    # If an explicitly approved site was not in joined, it can still appear
-    # in the eligibility report. Independent-source verification is performed
-    # by anime_discovery, not re-inferred from raw joined strings here.
-    domains = sorted(host for host in pro | eligible if host not in excluded and safe_hostname(host))
-    stats = {"files": len(files) + 2, "raw_domains": len(pro) + len(joined),
-             "whitelisted": len((pro | eligible) - set(domains)), "unique": len(domains)}
+    domains = sorted(host for host in pro | approved if host not in excluded and safe_hostname(host))
+    stats = {"files": len(files) + 1, "raw_domains": len(pro) + len(joined),
+             "whitelisted": len((pro | approved) - set(domains)), "unique": len(domains)}
     return domains, stats
 
 

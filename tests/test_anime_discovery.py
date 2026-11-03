@@ -165,12 +165,17 @@ def test_end_to_end_extended_merge_and_pack(tmp_path: Path, monkeypatch: pytest.
     raw = tmp_path / "downloads" / "anime-manga-extended"
     raw.mkdir(parents=True)
     (raw / "newedgex-joined.txt").write_text(
+        "".join(f"joined{i}.org\n" for i in range(discovery.MIN_JOINED_DOMAINS)) +
         "reddit.com\nfacebook.com\nconfirmed.org\nunreviewed.org\n", encoding="utf-8")
     (raw / source_catalog.DOWNLOAD_MANIFEST).write_text(
         "newedgex-joined.txt\n", encoding="utf-8")
     discovery_dir = tmp_path / "downloads" / "anime-discovery"
     discovery_dir.mkdir()
     (discovery_dir / "eligible-extended.txt").write_text(
+        "confirmed.org\nfacebook.com\nunreviewed.org\n", encoding="utf-8")
+    approvals_dir = tmp_path / "seeds"
+    approvals_dir.mkdir()
+    (approvals_dir / "anime-manga-extended.txt").write_text(
         "confirmed.org\nfacebook.com\n", encoding="utf-8")
     assert merge_hosts.main(["--category", "anime-manga-extended", "--no-progress"]) == 0
     generated = tmp_path / "hosts" / "anime-manga-extended.txt"

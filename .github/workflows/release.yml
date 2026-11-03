@@ -36,9 +36,8 @@ jobs:
       - name: Build curated Anime/Manga Pro first
         run: uv run python scripts/merge_hosts.py --category anime-manga --no-progress
 
-      - name: Validate discovery candidates before publication
-        run: uv run python scripts/anime_discovery.py --refresh --require-core-catalogs
-
+      # Extended is built solely from seeds/anime-manga-extended.txt merged via an
+      # approved PR. Live discovery findings never enter an unreviewed release.
       - name: Merge categories
         run: uv run python scripts/merge_hosts.py --all-categories --no-progress
 

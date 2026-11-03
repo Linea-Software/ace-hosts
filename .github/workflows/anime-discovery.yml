@@ -1,4 +1,4 @@
-name: Anime Manga discovery (review only)
+name: Anime Manga discovery (review PR)
 
 on:
   schedule:
@@ -6,7 +6,8 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 concurrency:
   group: anime-manga-discovery
@@ -26,9 +27,17 @@ jobs:
           uv run python scripts/download_sources.py --category anime-manga-extended --no-rate-limit
       - name: Build existing curated Pro baseline
         run: uv run python scripts/merge_hosts.py --category anime-manga --no-progress
-      - name: Collect independent catalog evidence
-        run: uv run python scripts/anime_discovery.py --refresh
-      - name: Publish review artifacts, NOT blocklists
+      - name: Discover catalogs and scrape public anime site homepages
+        run: uv run python scripts/anime_discovery.py --refresh --scrape-sites --max-scrape-sites 60
+      - name: Propose new sites for human review
+        run: uv run python scripts/propose_anime_sites.py
+      - name: Validate the proposed Extended list and tests
+        run: |
+          uv run python scripts/merge_hosts.py --category anime-manga-extended --no-progress
+          uv run pytest -q
+          uv run basedpyright
+      - name: Publish complete review artifacts
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: anime-manga-discovery-review
@@ -36,4 +45,17 @@ jobs:
             downloads/anime-discovery/candidates.jsonl
             downloads/anime-discovery/summary.json
             downloads/anime-discovery/eligible-extended.txt
+            downloads/anime-discovery/pr-body.md
+          if-no-files-found: warn
           retention-days: 30
+      - name: Create or update review PR
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.ANIME_DISCOVERY_PR_TOKEN || github.token }}
+          branch: automation/anime-discovery
+          base: main
+          delete-branch: true
+          add-paths: seeds/anime-manga-extended.txt
+          commit-message: "chore: propose anime sites for review"
+          title: "Anime Discovery: nuovi siti da approvare"
+          body-path: downloads/anime-discovery/pr-body.md

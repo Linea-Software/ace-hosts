@@ -22,7 +22,7 @@ but now builds independent lists for:
 - **dating** — dating and matchmaking sites
 - **shopping** — online shopping and commerce sites
 - **anime-manga** — anime, manga, manhwa, manhua, webtoons and related novels (curated Pro)
-- **anime-manga-extended** — optional evidence-filtered Extended list with independent catalog corroboration
+- **anime-manga-extended** — optional Extended list with proposed sites approved through an Anime Discovery pull request
 - **forums** — discussion forums and community websites
 - **news** — news and online press
 - **sports** — sports portals and scores
@@ -215,7 +215,9 @@ Validates the generated release directory and exits with an error when any file
 is larger than 2 GiB. The release workflow runs this check before checksums and
 publication.
 
-For the evidence-led anime/manga discovery workflow, conservative validation, multilingual optional search, licenses and manual approvals, see [Anime/Manga discovery documentation](docs/anime-manga-discovery.md).
+**Anime Discovery → PR → Release:** run [Anime Discovery](https://github.com/Linea-Software/ace-hosts/actions/workflows/anime-discovery.yml) manually (or let it run weekly). It reads extension catalogs, **scrapes public anime/manga website homepages** where allowed, and opens/updates a PR listing new candidate hosts. Review the domains and merge the PR; the next [Release](https://github.com/Linea-Software/ace-hosts/actions/workflows/release.yml) includes exactly these newly approved hosts in Anime/Manga Extended. Unmerged discoveries never reach published lists; no PR is opened if there are no new eligible proposals. Repository Actions must allow bot-created PRs (or set `ANIME_DISCOVERY_PR_TOKEN`).
+
+For source evidence, conservative filtering, scraping safeguards, licenses and manual approval, see [Anime/Manga discovery documentation](docs/anime-manga-discovery.md).
 
 ## Built-in categories and sources
 
@@ -234,7 +236,7 @@ mixed into these categories.
 | dating | UT1 `dating`; ShadowWhisperer Dating; AdGuard `dating` services |
 | shopping | UT1 `shopping`; AdGuard `shopping` services |
 | anime-manga | UT1 manga; newedgex refined; manually curated ACE seeds (Pro) |
-| anime-manga-extended | newedgex joined **only as a candidate source**; Pro plus independently corroborated extension catalogs or manually reviewed seeds; never a raw 103k-host import |
+| anime-manga-extended | newedgex joined **only as a candidate source**; Pro plus approved domains merged into `seeds/anime-manga-extended.txt` through discovery PR; never a raw 103k-host import |
 | forums | UT1 `forums` |
 | news | UT1 `press` |
 | sports | UT1 `sports` |

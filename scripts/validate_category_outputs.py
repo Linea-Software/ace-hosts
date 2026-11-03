@@ -110,6 +110,16 @@ def validate_all_categories(
             raise ValueError("shared infrastructure or reserved domain in Extended")
         if len(extended - pro) > max(3000, len(pro) // 2):
             raise ValueError("anomalous Extended growth requires manual review")
+        approved_path = utils.PROJECT_ROOT / "seeds" / "anime-manga-extended.txt"
+        if not approved_path.is_file():
+            raise ValueError("Extended requires committed, reviewable approvals")
+        approved = set(utils.iter_domains(approved_path))
+        excluded = global_whitelist | merge_hosts.load_category_exceptions(
+            exceptions_dir, "anime-manga-extended"
+        ) | merge_hosts.load_category_exceptions(exceptions_dir, "anime-manga")
+        expected = pro | {host for host in approved if host not in excluded and safe_hostname(host)}
+        if extended != expected:
+            raise ValueError("Extended contains unapproved domains or misses approved seeds")
     return results
 
 
