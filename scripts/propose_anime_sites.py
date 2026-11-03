@@ -53,7 +53,7 @@ def propose_sites(
                 continue
             if host in pro or host in existing or host in excluded:
                 continue
-            if row.get("status") not in {"validated-extended", "review"}:
+            if row.get("status") not in {"validated-extended", "website-verified", "review"}:
                 continue
             families = row.get("independent_families")
             if not isinstance(families, int) or isinstance(families, bool):
@@ -64,12 +64,20 @@ def propose_sites(
                 {"site-homepage:html-title-description", "site-homepage:html-rendered", "site-sitemap:sitemap-paths"} & scrapes
             )
             joined = row.get("joined") is True
-            if families >= 2 or (families >= 1 and joined and scraped):
+            web_sources = row.get("repositories", [])
+            web_lead = (isinstance(web_sources, list) and
+                        bool({"web-link", "web-directory", "brave-search", "site-outbound"}
+                             & set(cast(list[str], web_sources))))
+            website_verified = (row.get("verification_method") == "website-metadata"
+                                and row.get("review_eligible") is True
+                                and web_lead and scraped)
+            if families >= 2 or (families >= 1 and joined and scraped) or website_verified:
                 eligible.append(row)
 
-    # Prefer independent catalogs, then sites actually checked by scraping.
+    # Prefer confirmed independent catalogs, then website-verified candidates.
     eligible.sort(key=lambda row: (
         -int(cast(int, row["independent_families"]) >= 2),
+        -int(row.get("verification_method") == "website-metadata"),
         -int(bool({"site-homepage:html-title-description", "site-homepage:html-rendered", "site-sitemap:sitemap-paths"}
                   & set(cast(list[str], row["evidence"])))),
         cast(str, row["hostname"]),
@@ -87,17 +95,18 @@ def propose_sites(
     body = [
         "## New anime and manga sites for review",
         "",
-        f"**{len(names)} new domains proposed**. When you review and merge this PR into `main`,",
+        f"**{len(names)} new {'domain' if len(names) == 1 else 'domains'} proposed**. When you review and merge this PR into `main`,",
         "the next release will automatically add them to **Anime/Manga Extended**.",
         "Published lists remain unchanged until this PR is merged.",
         "",
-        "Discovery reads catalogs, sitemaps, and public site homepages (HTTP requests",
-        "and Chromium for JavaScript-rendered pages), respecting robots.txt and limits.",
+        "Discovery combines independent catalogs, multilingual public-web search,",
+        "robots-compliant recursive links, sitemaps and verified site metadata.",
+        "Static HTTP and bounded Chromium rendering are used where permitted.",
         "Scraped results and external links are **never published** "
         + "without human review and a merged PR.",
         "",
-        "| Domain | Sources | Categories | Languages | Independent catalogs | HTML | JS browser | Sitemap | In joined list |",
-        "| --- | --- | --- | --- | ---: | :---: | :---: | :---: | :---: |",
+        "| Domain | Sources | Categories | Languages | Independent catalogs | HTML | JS browser | Sitemap | In joined list | Verification level | Confidence | Verification method | Discovery source | Evidence |",
+        "| --- | --- | --- | --- | ---: | :---: | :---: | :---: | :---: | --- | ---: | --- | --- | --- |",
     ]
     for row in sorted(proposals, key=lambda item: cast(str, item["hostname"])):
         evidence = cast(list[str], row["evidence"])
@@ -110,13 +119,21 @@ def propose_sites(
         languages = row.get("languages", [])
         kinds = ", ".join(str(v) for v in cast(list[object], categories)) if isinstance(categories, list) else ""
         langs = ", ".join(str(v) for v in cast(list[object], languages)) if isinstance(languages, list) else ""
+        discovery_sources = row.get("discovery_sources", [])
+        origins = ", ".join(str(url).replace("|", "%7C")[:120] for url in
+                            cast(list[object], discovery_sources)[:2]) if isinstance(discovery_sources, list) else ""
+        method = str(row.get("verification_method", "catalog-and-site" if
+                            any(e.startswith("site-homepage:") for e in evidence) else "catalogs"))
+        level = "Website-verified" if method == "website-metadata" else "Confirmed" if cast(int, row["independent_families"]) >= 2 else "Catalog + website"
+        details = ", ".join(str(value).replace("|", "/")[:55] for value in evidence[:5])
         body.append("".join([
             f"| `{row['hostname']}` | {source_list} | {kinds} | {langs} | ",
             f"{row['independent_families']} | ",
             f"{'yes' if 'site-homepage:html-title-description' in evidence else 'no'} | ",
             f"{'yes' if 'site-homepage:html-rendered' in evidence else 'no'} | ",
             f"{'yes' if 'site-sitemap:sitemap-paths' in evidence else 'no'} | ",
-            f"{'yes' if row['joined'] is True else 'no'} |",
+            f"{'yes' if row['joined'] is True else 'no'} | ",
+            f"{level} | {row.get('confidence', 0)} | {method} | {origins} | {details} |",
         ]))
     body.extend([
         "",

@@ -42,14 +42,14 @@ MAX_HTML_BYTES = 1_000_000
 MAX_SITEMAP_URLS = 400
 MIN_INDEPENDENT_FAMILIES = 2
 CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("anime", re.compile(r"anime|アニメ|动漫", re.IGNORECASE)),
-    ("manga", re.compile(r"manga|漫画|マンガ|mangá|манга|komik|truyện tranh|มังงะ", re.IGNORECASE)),
-    ("manhwa", re.compile(r"manhwa|만화", re.IGNORECASE)),
-    ("manhua", re.compile(r"manhua|国漫", re.IGNORECASE)),
-    ("webtoon", re.compile(r"webtoon|웹툰", re.IGNORECASE)),
-    ("scanlation", re.compile(r"scanlation", re.IGNORECASE)),
-    ("light-novel", re.compile(r"light.?novel|ライトノベル", re.IGNORECASE)),
-    ("webnovel", re.compile(r"web.?novel|网络小说", re.IGNORECASE)),
+    ("anime", re.compile(r"anime|アニメ|动漫|動畫|애니메이션|аниме|أنمي|انمي", re.IGNORECASE)),
+    ("manga", re.compile(r"manga|漫画|漫畫|マンガ|mangá|манга|مانجا|مانغا|komik|truyện tranh|มังงะ|fumetti giapponesi", re.IGNORECASE)),
+    ("manhwa", re.compile(r"manhwa|만화|манхва", re.IGNORECASE)),
+    ("manhua", re.compile(r"manhua|国漫|國漫", re.IGNORECASE)),
+    ("webtoon", re.compile(r"webtoon|웹툰|条漫|條漫", re.IGNORECASE)),
+    ("scanlation", re.compile(r"scanlation|scantrad|scanlationes", re.IGNORECASE)),
+    ("light-novel", re.compile(r"light.?novel|ライトノベル|ラノベ|ранобэ|라이트노벨", re.IGNORECASE)),
+    ("webnovel", re.compile(r"web.?novel|网络小说|網絡小說|웹소설|tiểu thuyết mạng", re.IGNORECASE)),
 )
 # Exact general services plus shared infrastructure: a thematic *subdomain*
 # is preserved if its parent is not shared, never collapsed to an eTLD+1.
@@ -157,6 +157,7 @@ class Evidence:
     family: str
     field: str
     license: str | None = None
+    origin: str | None = None
 
 
 def _languages(value: object) -> tuple[str, ...]:
@@ -404,6 +405,10 @@ class SitePage(DirectoryLinks):
         self._in_title: bool = False
         self._in_heading: bool = False
         self._in_json_ld: bool = False
+        self._in_body: bool = False
+        self._hidden_depth: int = 0
+        self.visible_parts: list[str] = []
+        self.canonical: str = ""
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # pyright: ignore[reportImplicitOverride]
         super().handle_starttag(tag, attrs)
@@ -416,6 +421,12 @@ class SitePage(DirectoryLinks):
             self._in_json_ld = True
         elif tag == "html":
             self.language = attributes.get("lang") or ""
+        elif tag == "body":
+            self._in_body = True
+        elif tag in {"script", "style", "noscript"}:
+            self._hidden_depth += 1
+        elif tag == "link" and "canonical" in (attributes.get("rel") or "").lower():
+            self.canonical = (attributes.get("href") or "")[:1000]
         elif tag == "meta":
             key = (attributes.get("name") or attributes.get("property") or "").lower()
             content = (attributes.get("content") or "")[:1000]
@@ -433,6 +444,11 @@ class SitePage(DirectoryLinks):
             self._in_heading = False
         elif tag == "script":
             self._in_json_ld = False
+            self._hidden_depth = max(0, self._hidden_depth - 1)
+        elif tag in {"style", "noscript"}:
+            self._hidden_depth = max(0, self._hidden_depth - 1)
+        elif tag == "body":
+            self._in_body = False
 
     def handle_data(self, data: str) -> None:  # pyright: ignore[reportImplicitOverride]
         if self._in_title and sum(map(len, self.title_parts)) < 512:
@@ -442,16 +458,24 @@ class SitePage(DirectoryLinks):
         elif self._in_json_ld and len(self.json_ld) < 3:
             # JSON-LD is untrusted text, not code. No JSON-LD fetches are made.
             self.json_ld.append(data[:1000])
+        elif self._in_body and self._hidden_depth == 0 and len(self.visible_parts) < 35:
+            cleaned = data.strip()
+            if cleaned:
+                self.visible_parts.append(cleaned[:160])
 
     @property
     def title(self) -> str:
         return (" ".join(self.title_parts).strip() or self.og_title)[:200]
 
     @property
+    def visible_text(self) -> str:
+        return " ".join(self.visible_parts)[:2500]
+
+    @property
     def topic_text(self) -> str:
         return " ".join((
             self.title, self.og_title, self.description, self.keywords,
-            *self.headings, *self.json_ld,
+            *self.headings, *self.json_ld, self.visible_text,
         ))[:6000]
 
 
@@ -627,10 +651,10 @@ def scrape_catalog_sites(session: requests.Session, records: list[Evidence], joi
 
 def classify(records: list[Evidence], joined: set[str], pro: set[str],
              allowed: set[str], excluded: set[str]) -> tuple[list[dict[str, object]], set[str]]:
-    """Only cross-ecosystem corroborated or explicitly approved names qualify.
+    """Separate discovery confidence from approval for public release.
 
-    Pro remains a manually curated category. Search/directory or derived
-    catalogs *never* count towards independent corroboration.
+    Web leads never count as independent catalog families; verified websites
+    can be proposed for human review but cannot be auto-published.
     """
     group: dict[str, list[Evidence]] = defaultdict(list)
     for record in records:
@@ -640,15 +664,21 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
     for host, evidence in sorted(group.items()):
         families = {record.family for record in evidence
                     if record.family not in {"derived", "web-lead"}}
-        trusted = host in pro or host in allowed or (
-            len(families) >= MIN_INDEPENDENT_FAMILIES
-        )
+        site_checks = {record.field for record in evidence
+                       if record.repository == "site-homepage"
+                       and record.category in CONTENT_TYPES}
+        web_leads = {record.repository for record in evidence
+                     if record.repository in {"web-link", "web-directory", "brave-search",
+                                              "site-outbound"}}
+        website_verified = bool(site_checks and web_leads)
+        confirmed = len(families) >= MIN_INDEPENDENT_FAMILIES
+        trusted = host in pro or host in allowed or confirmed
         # The optional approval file allows explicitly reviewed hosts; never
         # allow it to override the global whitelist or shared-host safeguards.
         rejected = host in excluded or not safe_hostname(host)
-        status = "excluded" if rejected else "pro" if host in pro else (
-            "validated-extended" if trusted else "review"
-        )
+        status = ("excluded" if rejected else "pro" if host in pro else
+                  "validated-extended" if trusted else
+                  "website-verified" if website_verified else "review")
         if trusted and not rejected:
             approved.add(host)
         ledger.append({
@@ -657,6 +687,19 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
             "categories": sorted({v.category for v in evidence}),
             "languages": sorted({language for v in evidence for language in v.languages}),
             "repositories": sorted({v.repository for v in evidence}),
+            "discovery_sources": sorted({v.origin for v in evidence if v.origin})[:15],
+            "verification_method": ("independent-catalogs" if confirmed else
+                                    "website-metadata" if website_verified else
+                                    "unverified-lead"),
+            "release_approved": not rejected and (host in pro or host in allowed),
+            "decision_reason": ("excluded by maintainer policy or infrastructure rule" if rejected
+                                else "present in curated Pro" if host in pro
+                                else "merged maintainer-approved seed" if host in allowed
+                                else "corroborated by independent catalog families" if confirmed
+                                else "thematic homepage verified after web discovery" if website_verified
+                                else "insufficient independent content verification"),
+            "review_eligible": not rejected and (confirmed or website_verified
+                                    or (bool(families) and host in joined and bool(site_checks))),
             "extension_ids": sorted({f"{v.repository}:{v.extension_id}" for v in evidence if v.extension_id}),
             "evidence": sorted({f"{v.repository}:{v.field}" for v in evidence}),
             "licenses": sorted({v.license for v in evidence if v.license is not None}),
@@ -665,7 +708,9 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
             "confidence": 0 if rejected else 100 if host in pro else
                           95 if host in allowed else
                           90 if len(families) >= 2 and host in joined else
-                          80 if len(families) >= 2 else 30,
+                          80 if len(families) >= 2 else
+                          72 if website_verified else
+                          60 if families and host in joined and site_checks else 30,
             "status": status,
         })
     for host in sorted(allowed - group.keys()):
@@ -674,7 +719,12 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
             approved.add(host)
         ledger.append({
             "hostname": host, "names": [], "categories": [], "languages": [],
-            "repositories": ["maintainer-reviewed"], "extension_ids": [],
+            "repositories": ["maintainer-reviewed"], "discovery_sources": [],
+            "verification_method": "maintainer-reviewed", "review_eligible": False,
+            "release_approved": not rejected,
+            "decision_reason": ("excluded by maintainer policy or infrastructure rule"
+                                if rejected else "merged maintainer-approved seed"),
+            "extension_ids": [],
             "evidence": ["seeds/anime-manga-extended.txt"], "licenses": [],
             "independent_families": 0, "joined": host in joined,
             "confidence": 0 if rejected else 95,
@@ -690,7 +740,8 @@ def _load_hostnames(path: Path | None) -> set[str]:
 
 def build_discovery(records: list[Evidence], *, joined_file: Path, pro_file: Path,
                     approved_file: Path, whitelist_file: Path, exceptions_file: Path,
-                    output_dir: Path, checked_at: str) -> dict[str, int]:
+                    output_dir: Path, checked_at: str,
+                    crawl_stats: dict[str, object] | None = None) -> dict[str, int]:
     if not joined_file.is_file() or not pro_file.is_file():
         raise ValueError("current joined download and Pro list are required")
     joined = _load_hostnames(joined_file)
@@ -701,7 +752,7 @@ def build_discovery(records: list[Evidence], *, joined_file: Path, pro_file: Pat
     excluded = _load_hostnames(whitelist_file) | _load_hostnames(exceptions_file)
     ledger, eligible = classify(records, joined, pro, allowed, excluded)
     counts = {state: sum(entry["status"] == state for entry in ledger)
-              for state in ("pro", "validated-extended", "review", "excluded")}
+              for state in ("pro", "validated-extended", "website-verified", "review", "excluded")}
     # A broken or hostile upstream cannot silently trigger an enormous jump.
     additional = eligible - pro
     if len(additional) > max(3000, len(pro) // 2):
@@ -711,11 +762,40 @@ def build_discovery(records: list[Evidence], *, joined_file: Path, pro_file: Pat
                              (json.dumps({"detected_at": checked_at, **row},
                                          ensure_ascii=False, sort_keys=True) for row in ledger))
     utils.atomic_write_lines(output_dir / "eligible-extended.txt", sorted(eligible))
-    summary = {"catalog_candidates": len(ledger), "joined_input": len(joined),
+    summary = {"catalog_candidates": len(ledger), "candidate_domains": len(ledger),
+               "joined_input": len(joined),
                "joined_not_promoted": len(joined - pro - eligible),
                "pro_input": len(pro), "new_eligible": len(additional), **counts}
+    summary["review_candidates"] = sum(row["review_eligible"] is True
+                                       and row["hostname"] not in pro | allowed
+                                       for row in ledger)
     utils.atomic_write_lines(output_dir / "summary.json",
                              [json.dumps(summary, sort_keys=True)])
+    if crawl_stats is not None:
+        report = dict(crawl_stats)
+        report.update({
+            "new_domains_not_in_pro": sum(row["hostname"] not in pro and
+                                          row["hostname"] not in allowed for row in ledger),
+            "manual_review_candidates": summary["review_candidates"],
+            "excluded_domains": counts["excluded"],
+            "duplicate_domain_mentions": len(records) - len({item.hostname for item in records}),
+            "candidate_categories": dict(sorted(
+                (category, sum(category in cast(list[str], row["categories"]) for row in ledger))
+                for category in CONTENT_TYPES)),
+        })
+        utils.atomic_write_lines(output_dir / "crawl-report.json",
+                                 [json.dumps(report, ensure_ascii=False, sort_keys=True)])
+        lines = ["# Anime discovery crawl report", "",
+                 f"URLs discovered: {report.get('urls_discovered', 0)}",
+                 f"URLs crawled: {report.get('urls_crawled', 0)}",
+                 f"Requests: {report.get('requests', 0)} / {report.get('request_budget', 0)}",
+                 f"New review candidates: {summary['review_candidates']}",
+                 f"Verified websites: {report.get('websites_verified', 0)}",
+                 f"Excluded: {counts['excluded']}", "",
+                 "A low proposal count can indicate robots/access restrictions, exhausted",
+                 "request budgets, insufficient thematic metadata, already-approved sites,",
+                 "or excluded infrastructure. See crawl-report.json and candidates.jsonl."]
+        utils.atomic_write_lines(output_dir / "crawl-report.md", lines)
     return summary
 
 
@@ -803,6 +883,16 @@ class DiscoveryArgs(argparse.Namespace):
     directory_url: list[str] | None = None
     brave_search: bool = False
     queries_file: Path | None = None
+    crawl_web: bool = False
+    crawl_requests: int = 220
+    crawl_seconds: int = 600
+    crawl_depth: int = 3
+    crawl_workers: int = 4
+    crawl_pages_per_domain: int = 3
+    crawl_state: Path = utils.PROJECT_ROOT / "downloads" / "anime-discovery" / "crawl-state.sqlite"
+    crawl_query_templates: Path | None = None
+    crawl_directory_url: list[str] | None = None
+    crawl_public_indexes: bool = True
     approved_file: Path = utils.PROJECT_ROOT / "seeds" / "anime-manga-extended.txt"
     whitelist: Path = utils.PROJECT_ROOT / "whitelist.txt"
     exceptions: Path = utils.PROJECT_ROOT / "exceptions" / "anime-manga.txt"
@@ -830,6 +920,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-sitemaps", dest="scrape_sitemaps", action="store_false",
                         help="Do not inspect the same-origin /sitemap.xml")
     parser.add_argument("--queries-file", type=Path, help="JSON map of language to search query")
+    parser.add_argument("--crawl-web", action="store_true",
+                        help="Run independent persistent web discovery and verification")
+    parser.add_argument("--crawl-requests", type=int, default=220)
+    parser.add_argument("--crawl-seconds", type=int, default=600)
+    parser.add_argument("--crawl-depth", type=int, default=3)
+    parser.add_argument("--crawl-workers", type=int, default=4)
+    parser.add_argument("--crawl-pages-per-domain", type=int, default=3)
+    parser.add_argument("--crawl-state", type=Path, default=DiscoveryArgs.crawl_state)
+    parser.add_argument("--crawl-directory-url", action="append", default=[])
+    parser.add_argument("--crawl-query-templates", type=Path,
+                        help="JSON language-to-search-template map with {topic} and {terms}")
+    parser.add_argument("--no-crawl-public-indexes", dest="crawl_public_indexes",
+                        action="store_false")
     parser.add_argument("--directory-url", action="append", default=[],
                         help="Opt-in public directory (one HTML page, robots respected)")
     parser.add_argument("--approved-file", type=Path, default=DiscoveryArgs.approved_file)
@@ -843,6 +946,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--max-browser-sites must be between 1 and 30")
     utils.setup_logging()
     records: list[Evidence] = []
+    crawl_stats: dict[str, object] | None = None
     succeeded: set[str] = set()
     with requests.Session() as session:
         session.headers.update({"User-Agent": "ace-hosts/0.1 (public catalog discovery)"})
@@ -882,11 +986,45 @@ def main(argv: list[str] | None = None) -> int:
                 max_browser_sites=args.max_browser_sites,
                 scrape_sitemaps=args.scrape_sitemaps,
             ))
+    if args.crawl_web:
+        from scripts.anime_crawler import CrawlConfig, crawl_web
+        import os
+        try:
+            templates: dict[str, str] | None = None
+            if args.crawl_query_templates is not None:
+                source = cast(object, json.loads(args.crawl_query_templates.read_text(encoding="utf-8")))
+                if not isinstance(source, dict):
+                    raise ValueError("crawl query templates must be a JSON object")
+                typed_source = cast(dict[object, object], source)
+                if not all(isinstance(key, str) and isinstance(value, str)
+                           for key, value in typed_source.items()):
+                    raise ValueError("crawl query templates must map languages to strings")
+                templates = cast(dict[str, str], source)
+            web_records, crawl_stats = crawl_web(
+                records,
+                CrawlConfig(
+                    args.crawl_state, max_requests=args.crawl_requests,
+                    max_seconds=args.crawl_seconds, max_depth=args.crawl_depth,
+                    concurrency=args.crawl_workers,
+                    max_pages_domain=args.crawl_pages_per_domain,
+                    max_browser=args.max_browser_sites if args.browser_fallback else 0,
+                ),
+                directories=tuple(args.crawl_directory_url or []),
+                public_indexes=args.crawl_public_indexes,
+                search_token=os.environ.get("ACE_DISCOVERY_BRAVE_API_KEY"),
+                search_templates=templates,
+            )
+            records.extend(web_records)
+        except (OSError, ValueError, RuntimeError) as error:
+            logger.error("web crawl failed: %s", error)
+            return 1
     if args.require_core_catalogs and not {"mangayomi", "aidoku", "miru", "lnreader"} <= succeeded:
         logger.error("at least one core independent catalog is missing; refusing to publish")
         return 1
-    if len(succeeded - {"derived"}) < MIN_INDEPENDENT_FAMILIES:
-        logger.error("fewer than two independent catalogs succeeded; refusing to export")
+    if (len(succeeded - {"derived"}) < MIN_INDEPENDENT_FAMILIES
+            and not (args.crawl_web and crawl_stats is not None
+                     and crawl_stats.get("evidence_domains", 0))):
+        logger.error("no sufficient catalog or independent web discovery input")
         return 1
     try:
         summary = build_discovery(
@@ -894,7 +1032,7 @@ def main(argv: list[str] | None = None) -> int:
             pro_file=args.hosts_dir / "anime-manga.txt",
             approved_file=args.approved_file, whitelist_file=args.whitelist,
             exceptions_file=args.exceptions, output_dir=args.output_dir,
-            checked_at=date.today().isoformat(),
+            checked_at=date.today().isoformat(), crawl_stats=crawl_stats,
         )
     except (ValueError, OSError) as error:
         logger.error("discovery failed: %s", error)

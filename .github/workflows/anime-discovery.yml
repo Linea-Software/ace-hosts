@@ -3,7 +3,20 @@ name: Anime Manga discovery (review PR)
 on:
   schedule:
     - cron: "30 4 * * 3"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      crawl_requests:
+        description: "Maximum HTTP requests per run (1-10000)"
+        type: number
+        default: 220
+      crawl_seconds:
+        description: "Maximum crawl runtime in seconds (1-7200)"
+        type: number
+        default: 600
+      crawl_depth:
+        description: "Maximum link discovery depth (0-6)"
+        type: number
+        default: 3
 
 permissions:
   contents: write
@@ -23,14 +36,30 @@ jobs:
       - run: uv sync --locked
       - name: Install Playwright Chromium
         run: uv run playwright install --with-deps chromium
+      - name: Restore incremental crawler state
+        uses: actions/cache@v4
+        with:
+          path: downloads/anime-discovery/crawl-state.sqlite
+          key: ${{ runner.os }}-anime-crawl-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-anime-crawl-
       - name: Fetch curated and joined sources
         run: |
           uv run python scripts/download_sources.py --category anime-manga --no-rate-limit
           uv run python scripts/download_sources.py --category anime-manga-extended --no-rate-limit
       - name: Build existing curated Pro baseline
         run: uv run python scripts/merge_hosts.py --category anime-manga --no-progress
-      - name: Discover catalogs and scrape public anime site homepages
-        run: uv run python scripts/anime_discovery.py --refresh --scrape-sites --browser-fallback --max-scrape-sites 60 --max-browser-sites 15
+      - name: Discover public web and verify candidates
+        env:
+          ACE_DISCOVERY_BRAVE_API_KEY: ${{ secrets.ACE_DISCOVERY_BRAVE_API_KEY }}
+          CRAWL_REQUESTS: ${{ inputs.crawl_requests || 220 }}
+          CRAWL_SECONDS: ${{ inputs.crawl_seconds || 600 }}
+          CRAWL_DEPTH: ${{ inputs.crawl_depth || 3 }}
+        run: |
+          uv run python scripts/anime_discovery.py --refresh --scrape-sites --browser-fallback \
+            --max-scrape-sites 60 --max-browser-sites 15 --crawl-web \
+            --crawl-requests "$CRAWL_REQUESTS" --crawl-seconds "$CRAWL_SECONDS" \
+            --crawl-depth "$CRAWL_DEPTH"
       - name: Propose new sites for human review
         run: uv run python scripts/propose_anime_sites.py
       - name: Validate the proposed Extended list and tests
@@ -48,9 +77,24 @@ jobs:
             downloads/anime-discovery/summary.json
             downloads/anime-discovery/eligible-extended.txt
             downloads/anime-discovery/pr-body.md
+            downloads/anime-discovery/crawl-report.json
+            downloads/anime-discovery/crawl-report.md
+            downloads/anime-discovery/crawl-state.sqlite
           if-no-files-found: warn
           retention-days: 30
+      - name: Protect a previously reviewed proposal branch
+        id: review_lock
+        env:
+          GH_TOKEN: ${{ secrets.ANIME_DISCOVERY_PR_TOKEN || github.token }}
+        run: |
+          reviews=$(gh pr view automation/anime-discovery --json reviews --jq '.reviews | length' 2>/dev/null || echo 0)
+          manual=$(gh pr view automation/anime-discovery --json commits --jq '[.commits[].messageHeadline | select(. != "chore: propose anime sites for review")] | length' 2>/dev/null || echo 0)
+          if [ "$reviews" -gt 0 ] || [ "$manual" -gt 0 ]; then
+            echo "locked=true" >> "$GITHUB_OUTPUT"
+            echo "Existing PR has reviews or manual commits; preserving its branch and edits. New findings remain in this run's artifacts." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Create or update review PR
+        if: steps.review_lock.outputs.locked != 'true'
         id: review_pr
         continue-on-error: true
         uses: peter-evans/create-pull-request@v8
