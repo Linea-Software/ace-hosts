@@ -61,7 +61,7 @@ jobs:
           delete-branch: true
           add-paths: seeds/anime-manga-extended.txt
           commit-message: "chore: propose anime sites for review"
-          title: "Anime Discovery: nuovi siti da approvare"
+          title: "Anime Discovery: new sites for review"
           body-path: downloads/anime-discovery/pr-body.md
 
       - name: Explain blocked PR permissions and preserve manual review link

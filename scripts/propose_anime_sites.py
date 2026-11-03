@@ -85,18 +85,18 @@ def propose_sites(
         )
 
     body = [
-        "## Nuovi siti anime/manga da approvare",
+        "## New anime and manga sites for review",
         "",
-        f"**{len(names)} domini proposti**. Se approvi e unisci questa PR in `main`,",
-        "la prossima Release li aggiunge automaticamente a **Anime/Manga Extended**.",
-        "Finché la PR è aperta, le liste pubbliche non cambiano.",
+        f"**{len(names)} new domains proposed**. When you review and merge this PR into `main`,",
+        "the next release will automatically add them to **Anime/Manga Extended**.",
+        "Published lists remain unchanged until this PR is merged.",
         "",
-        "La discovery legge cataloghi, sitemap e homepage HTML pubbliche (requests",
-        "e Chromium se serve JavaScript), rispettando robots.txt e i limiti.",
-        "Il contenuto scraping e i link esterni **non** vengono mai pubblicati "
-        + "senza revisione e merge della PR.",
+        "Discovery reads catalogs, sitemaps, and public site homepages (HTTP requests",
+        "and Chromium for JavaScript-rendered pages), respecting robots.txt and limits.",
+        "Scraped results and external links are **never published** "
+        + "without human review and a merged PR.",
         "",
-        "| Dominio | Fonti | Categoria | Lingue | Cataloghi indipendenti | HTML | Browser JS | Sitemap | In joined |",
+        "| Domain | Sources | Categories | Languages | Independent catalogs | HTML | JS browser | Sitemap | In joined list |",
         "| --- | --- | --- | --- | ---: | :---: | :---: | :---: | :---: |",
     ]
     for row in sorted(proposals, key=lambda item: cast(str, item["hostname"])):
@@ -113,20 +113,20 @@ def propose_sites(
         body.append("".join([
             f"| `{row['hostname']}` | {source_list} | {kinds} | {langs} | ",
             f"{row['independent_families']} | ",
-            f"{'sì' if 'site-homepage:html-title-description' in evidence else 'no'} | ",
-            f"{'sì' if 'site-homepage:html-rendered' in evidence else 'no'} | ",
-            f"{'sì' if 'site-sitemap:sitemap-paths' in evidence else 'no'} | ",
-            f"{'sì' if row['joined'] is True else 'no'} |",
+            f"{'yes' if 'site-homepage:html-title-description' in evidence else 'no'} | ",
+            f"{'yes' if 'site-homepage:html-rendered' in evidence else 'no'} | ",
+            f"{'yes' if 'site-sitemap:sitemap-paths' in evidence else 'no'} | ",
+            f"{'yes' if row['joined'] is True else 'no'} |",
         ]))
     body.extend([
         "",
-        "**Prima del merge:** verifica che i domini siano siti tematici, non servizi",
-        "generalisti, mirror non desiderati o falsi positivi. Puoi eliminare righe",
-        "dal file `seeds/anime-manga-extended.txt` direttamente nella PR.",
-        "Le eccezioni e la whitelist restano prioritarie.",
+        "**Before merging:** verify that each domain is a relevant thematic site, not a",
+        "general-purpose service, an unwanted mirror, or a false positive. Remove lines",
+        "from `seeds/anime-manga-extended.txt` directly in the PR.",
+        "The whitelist and category exclusions still take precedence.",
         "",
-        "I dati grezzi e i candidati non proposti sono disponibili negli artifact",
-        "del job Anime Discovery.",
+        "Raw discovery evidence and candidates not proposed are in the artifacts",
+        "from the Anime Discovery workflow.",
     ])
     utils.atomic_write_lines(body_path, body)
     return names
