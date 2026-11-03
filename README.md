@@ -51,6 +51,7 @@ produce one SQLite backup ZIP such as `site-pack-adult-free.zip` or
 - **Global whitelist support** via `whitelist.txt`, plus exact-domain **category exceptions** via `exceptions/<category>.txt`.
 - **Optional curated category seeds** in `seeds/<category>.txt`, merged with successful built-in source downloads (not with explicit `--input`).
 - **Deterministic output** through deduplication and sorting.
+- **Release quality gate** checks every category has current downloaded sources, a nonempty sorted and deduplicated hosts file, matching entry metadata, upstream-license attribution and no excluded domains.
 - **Whole-file releases** — merged lists and site-pack ZIPs are never split;
   release validation fails if any generated asset exceeds 2 GiB.
 - **Deterministic environment** through exact direct dependency pins and the
@@ -76,6 +77,7 @@ Build every category:
 ```bash
 uv run python scripts/download_sources.py --all-categories
 uv run python scripts/merge_hosts.py --all-categories
+uv run python scripts/validate_category_outputs.py
 uv run python scripts/build_site_packs.py
 ```
 

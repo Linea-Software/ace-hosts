@@ -3,9 +3,9 @@
 **ace-hosts** is a Python pipeline that downloads, merges, deduplicates and
 packages category-specific host lists for DNS-based blocking. It began as a
 reimplementation of the archived [`columndeeply/hosts`](https://github.com/columndeeply/hosts)
-adult-list tooling and now builds separate compact adult, extended adult,
-gaming, social, gambling, streaming, dating and shopping lists plus
-Ace Engine-compatible SQLite site-pack ZIPs.
+adult-list tooling and now builds separate curated behavioural categories,
+including anime, manga, manhwa, manhua, messaging, gaming, social, news,
+forums, sports and AI tools, plus Ace Engine-compatible SQLite site-pack ZIPs.
 
 This project lives inside the `ace-project` monorepo directory but is a
 **standalone git repository** (`C:\Projects\ace-project\ace-hosts`).
@@ -40,6 +40,7 @@ ace-hosts/
 │   ├── download_sources.py  # Atomic category downloads + success manifests
 │   ├── merge_hosts.py       # Category merge/dedupe/whitelist/sort
 │   ├── build_site_packs.py  # Ace-compatible SQLite pack.db ZIP generation
+│   ├── validate_category_outputs.py # Streaming source/hosts/attribution release guard
 │   └── validate_release_assets.py # 2 GiB release-asset guard
 ├── tests/                   # pytest suite — must never touch the network
 ├── hosts/                   # Generated output — gitignored
@@ -60,6 +61,7 @@ Always use `uv` — never bare `pip`/`python` outside the project environment.
 | `uv run python scripts/download_sources.py --all-categories` | Fetch every built-in category |
 | `uv run python scripts/merge_hosts.py --all-categories` | Build every category as one merged file |
 | `uv run python scripts/build_site_packs.py` | Build Ace Engine-compatible site-pack ZIPs |
+| `uv run python scripts/validate_category_outputs.py` | Reject incomplete/stale/empty/invalid category outputs |
 | `uv run python scripts/validate_release_assets.py hosts` | Fail if any release asset exceeds 2 GiB |
 | `uv audit` | Check lockfile against OSV advisories |
 | `uv add <package>` / `uv remove <package>` | Maintainers only: change direct dependencies |
@@ -76,10 +78,13 @@ Console scripts (`ace-hosts-download`, `ace-hosts-merge`,
    that succeeded in the current run.
 3. `merge_hosts.py` follows that manifest, parses inputs line-by-line, applies
    `whitelist.txt`, deduplicates/sorts, and writes one `hosts/<category>.txt`.
-4. `build_site_packs.py` hashes merged domains with XXH3-64, writes the exact
+4. `validate_category_outputs.py` runs before pack generation and validates
+   current successful-source manifests, entry counts, sorted unique output,
+   per-category exclusions and upstream-license attribution in a streaming pass.
+5. `build_site_packs.py` hashes merged domains with XXH3-64, writes the exact
    Ace Engine `entries`/`pack_meta` SQLite schema, and publishes one
    `site-pack-*.zip` containing `pack.db` for each managed pack.
-5. `validate_release_assets.py` rejects any generated release file larger than
+6. `validate_release_assets.py` rejects any generated release file larger than
    2 GiB before GitHub release publication.
 
 ## Conventions

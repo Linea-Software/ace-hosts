@@ -5,4 +5,5 @@ angelfire.com
 apkpure.com
 artstation.com
 3.nhk.or.jp
+nhk.or.jp
 api.w.org

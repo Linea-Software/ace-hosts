@@ -36,6 +36,9 @@ jobs:
       - name: Merge categories
         run: uv run python scripts/merge_hosts.py --all-categories --no-progress
 
+      - name: Validate merged category outputs
+        run: uv run python scripts/validate_category_outputs.py
+
       - name: Build Ace site packs
         run: uv run python scripts/build_site_packs.py
 
