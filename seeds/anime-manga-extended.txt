@@ -1,3 +1,15 @@
 # Reviewed Extended-only hostname approvals.
 # Add exact site hosts only after manual review and record rationale in the PR.
 # Do not add shared infrastructure, search engines, social networks or code hosting.
+www.bilinovel.com
+www.dmzj.com
+www.gufengmh.com
+www.mangabats.com
+www.mangacopy.com
+www.mangakakalot.gg
+www.mangaread.org
+www.manhuagui.com
+www.novelupdates.com
+www.royalroad.com
+www.webtoons.com
+www.wenku8.net
