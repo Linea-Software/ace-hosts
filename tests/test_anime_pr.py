@@ -32,13 +32,20 @@ def test_scraping_public_site_metadata_and_links(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(discovery, "_fetch", fake_fetch)
     with requests.Session() as session:
         results = discovery.scrape_site(session, "readmanga.org", {"linked.org"})
-    assert urls == ["https://readmanga.org/robots.txt", "https://readmanga.org/"]
-    assert results[0].repository == "site-homepage"
-    assert results[0].languages == ("it",)
-    assert results[0].name == "Manga Reader"
-    assert len(results) == 2
-    assert results[1].hostname == "linked.org"
-    assert results[1].family == "web-lead"
+    assert urls == [
+        "https://readmanga.org/robots.txt",
+        "https://readmanga.org/",
+        "https://readmanga.org/sitemap.xml",
+    ]
+    pages = [item for item in results if item.repository == "site-homepage"]
+    assert pages
+    assert {item.category for item in pages} == {"anime", "manga", "manhwa"}
+    assert all(item.languages == ("it",) for item in pages)
+    assert all(item.name == "Manga Reader" for item in pages)
+    leads = [item for item in results if item.repository == "site-outbound"]
+    assert len(leads) == 1
+    assert leads[0].hostname == "linked.org"
+    assert leads[0].family == "web-lead"
 
 
 def test_scraping_respects_robots_and_refuses_private_targets(monkeypatch: pytest.MonkeyPatch):
@@ -95,6 +102,8 @@ def test_pr_proposal_filters_and_is_idempotent(tmp_path: Path):
     rows = [
         record("confirmed.org", 2, "validated-extended"),
         record("scraped.org", 1, "review", joined=True, scraped=True),
+        {**record("sitemap-reader.org", 1, "review", joined=True),
+         "evidence": ["site-sitemap:sitemap-paths"], "categories": ["manga"], "languages": ["ja"]},
         record("one-catalog.org", 1, "review", joined=True),
         record("outbound-only.org", 0, "review", joined=True, scraped=True),
         record("already.org", 2, "validated-extended"),
@@ -113,10 +122,14 @@ def test_pr_proposal_filters_and_is_idempotent(tmp_path: Path):
     body = tmp_path / "pr-body.md"
 
     new = propose_sites(ledger, approved, pro, whitelist, exceptions, body)
-    assert new == ["confirmed.org", "scraped.org"]
-    assert list(utils.iter_domains(approved)) == ["already.org", "confirmed.org", "scraped.org"]
+    assert new == ["confirmed.org", "scraped.org", "sitemap-reader.org"]
+    assert list(utils.iter_domains(approved)) == [
+        "already.org", "confirmed.org", "scraped.org", "sitemap-reader.org",
+    ]
     assert "confirmed.org" in body.read_text(encoding="utf-8")
     assert "scraped.org" in body.read_text(encoding="utf-8")
+    assert "sitemap-reader.org" in body.read_text(encoding="utf-8")
+    assert "ja" in body.read_text(encoding="utf-8")
 
     original = approved.read_bytes()
     assert propose_sites(ledger, approved, pro, whitelist, exceptions, body) == []

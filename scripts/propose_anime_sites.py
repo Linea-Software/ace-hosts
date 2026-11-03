@@ -59,7 +59,10 @@ def propose_sites(
             if not isinstance(families, int) or isinstance(families, bool):
                 continue
             evidence = row.get("evidence")
-            scraped = isinstance(evidence, list) and "site-homepage:html-title-description" in evidence
+            scrapes: set[str] = set(cast(list[str], evidence)) if isinstance(evidence, list) else set()
+            scraped = bool(
+                {"site-homepage:html-title-description", "site-homepage:html-rendered", "site-sitemap:sitemap-paths"} & scrapes
+            )
             joined = row.get("joined") is True
             if families >= 2 or (families >= 1 and joined and scraped):
                 eligible.append(row)
@@ -67,7 +70,8 @@ def propose_sites(
     # Prefer independent catalogs, then sites actually checked by scraping.
     eligible.sort(key=lambda row: (
         -int(cast(int, row["independent_families"]) >= 2),
-        -int("site-homepage:html-title-description" in cast(list[str], row["evidence"])),
+        -int(bool({"site-homepage:html-title-description", "site-homepage:html-rendered", "site-sitemap:sitemap-paths"}
+                  & set(cast(list[str], row["evidence"])))),
         cast(str, row["hostname"]),
     ))
     proposals = eligible[:max_new]
@@ -87,12 +91,13 @@ def propose_sites(
         "la prossima Release li aggiunge automaticamente a **Anime/Manga Extended**.",
         "Finché la PR è aperta, le liste pubbliche non cambiano.",
         "",
-        "La discovery legge cataloghi di estensioni e controlla homepage HTML pubbliche",
-        "(robots.txt, limiti di richieste/dimensione). Il contenuto scraping e i link",
-        "esterni **non** vengono mai pubblicati senza revisione e merge della PR.",
+        "La discovery legge cataloghi, sitemap e homepage HTML pubbliche (requests",
+        "e Chromium se serve JavaScript), rispettando robots.txt e i limiti.",
+        "Il contenuto scraping e i link esterni **non** vengono mai pubblicati "
+        + "senza revisione e merge della PR.",
         "",
-        "| Dominio | Fonti | Cataloghi indipendenti | Homepage verificata | In joined |",
-        "| --- | --- | ---: | :---: | :---: |",
+        "| Dominio | Fonti | Categoria | Lingue | Cataloghi indipendenti | HTML | Browser JS | Sitemap | In joined |",
+        "| --- | --- | --- | --- | ---: | :---: | :---: | :---: | :---: |",
     ]
     for row in sorted(proposals, key=lambda item: cast(str, item["hostname"])):
         evidence = cast(list[str], row["evidence"])
@@ -101,11 +106,18 @@ def propose_sites(
             source for source in cast(list[str], sources)
             if source.isascii() and source.replace("-", "").replace("_", "").isalnum()
         ) if isinstance(sources, list) else ""
-        body.append(
-            f"| `{row['hostname']}` | {source_list} | {row['independent_families']} | " +
-            f"{'sì' if 'site-homepage:html-title-description' in evidence else 'no'} | " +
-            f"{'sì' if row['joined'] is True else 'no'} |"
-        )
+        categories = row.get("categories", [])
+        languages = row.get("languages", [])
+        kinds = ", ".join(str(v) for v in cast(list[object], categories)) if isinstance(categories, list) else ""
+        langs = ", ".join(str(v) for v in cast(list[object], languages)) if isinstance(languages, list) else ""
+        body.append("".join([
+            f"| `{row['hostname']}` | {source_list} | {kinds} | {langs} | ",
+            f"{row['independent_families']} | ",
+            f"{'sì' if 'site-homepage:html-title-description' in evidence else 'no'} | ",
+            f"{'sì' if 'site-homepage:html-rendered' in evidence else 'no'} | ",
+            f"{'sì' if 'site-sitemap:sitemap-paths' in evidence else 'no'} | ",
+            f"{'sì' if row['joined'] is True else 'no'} |",
+        ]))
     body.extend([
         "",
         "**Prima del merge:** verifica che i domini siano siti tematici, non servizi",

@@ -15,13 +15,14 @@ import re
 import socket
 import sys
 import time
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import cast
-from urllib.parse import quote, urljoin, urlsplit
+from typing import Protocol, cast
+from urllib.parse import quote, unquote, urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
 import requests
@@ -30,6 +31,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts import utils
+from scripts.anime_browser import BrowserRenderer
 
 logger = logging.getLogger("ace-hosts.anime-discovery")
 MAX_RESPONSE_BYTES = 10_000_000
@@ -37,13 +39,18 @@ MAX_CANDIDATES = 50_000
 MIN_JOINED_DOMAINS = 25_000
 MAX_DIRECTORY_LINKS = 400
 MAX_HTML_BYTES = 1_000_000
+MAX_SITEMAP_URLS = 400
 MIN_INDEPENDENT_FAMILIES = 2
-SITE_TERMS = re.compile(
-    r"manga|anime|manhwa|manhua|webtoon|scanlation|web.?novel|light.?novel|" +
-    r"漫画|マンガ|アニメ|만화|웹툰|动漫|манга|komik|truyện tranh|มังงะ|mangá",
-    re.IGNORECASE,
+CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("anime", re.compile(r"anime|アニメ|动漫", re.IGNORECASE)),
+    ("manga", re.compile(r"manga|漫画|マンガ|mangá|манга|komik|truyện tranh|มังงะ", re.IGNORECASE)),
+    ("manhwa", re.compile(r"manhwa|만화", re.IGNORECASE)),
+    ("manhua", re.compile(r"manhua|国漫", re.IGNORECASE)),
+    ("webtoon", re.compile(r"webtoon|웹툰", re.IGNORECASE)),
+    ("scanlation", re.compile(r"scanlation", re.IGNORECASE)),
+    ("light-novel", re.compile(r"light.?novel|ライトノベル", re.IGNORECASE)),
+    ("webnovel", re.compile(r"web.?novel|网络小说", re.IGNORECASE)),
 )
-
 # Exact general services plus shared infrastructure: a thematic *subdomain*
 # is preserved if its parent is not shared, never collapsed to an eTLD+1.
 SHARED_SUFFIXES = frozenset({
@@ -383,36 +390,74 @@ def fetch_directory(session: requests.Session, url: str, *, timeout: float = 12)
 
 
 class SitePage(DirectoryLinks):
-    """Parse public homepage metadata and a bounded number of outbound links."""
+    """Bounded visible metadata: title, OpenGraph, headings and JSON-LD."""
 
     def __init__(self) -> None:
         super().__init__()
         self.title_parts: list[str] = []
         self.description: str = ""
+        self.keywords: str = ""
+        self.og_title: str = ""
         self.language: str = ""
+        self.headings: list[str] = []
+        self.json_ld: list[str] = []
         self._in_title: bool = False
+        self._in_heading: bool = False
+        self._in_json_ld: bool = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # pyright: ignore[reportImplicitOverride]
         super().handle_starttag(tag, attrs)
         attributes = dict(attrs)
         if tag == "title":
             self._in_title = True
+        elif tag in {"h1", "h2"}:
+            self._in_heading = True
+        elif tag == "script" and (attributes.get("type") or "").lower() == "application/ld+json":
+            self._in_json_ld = True
         elif tag == "html":
             self.language = attributes.get("lang") or ""
-        elif tag == "meta" and (attributes.get("name") or "").lower() == "description":
-            self.description = (attributes.get("content") or "")[:1000]
+        elif tag == "meta":
+            key = (attributes.get("name") or attributes.get("property") or "").lower()
+            content = (attributes.get("content") or "")[:1000]
+            if key in {"description", "og:description", "twitter:description"}:
+                self.description = content if not self.description else self.description
+            elif key == "keywords":
+                self.keywords = content
+            elif key in {"og:title", "twitter:title"}:
+                self.og_title = content
 
     def handle_endtag(self, tag: str) -> None:  # pyright: ignore[reportImplicitOverride]
         if tag == "title":
             self._in_title = False
+        elif tag in {"h1", "h2"}:
+            self._in_heading = False
+        elif tag == "script":
+            self._in_json_ld = False
 
     def handle_data(self, data: str) -> None:  # pyright: ignore[reportImplicitOverride]
         if self._in_title and sum(map(len, self.title_parts)) < 512:
             self.title_parts.append(data[:512])
+        elif self._in_heading and len(self.headings) < 15:
+            self.headings.append(data[:200])
+        elif self._in_json_ld and len(self.json_ld) < 3:
+            # JSON-LD is untrusted text, not code. No JSON-LD fetches are made.
+            self.json_ld.append(data[:1000])
 
     @property
     def title(self) -> str:
-        return " ".join(self.title_parts).strip()[:200]
+        return (" ".join(self.title_parts).strip() or self.og_title)[:200]
+
+    @property
+    def topic_text(self) -> str:
+        return " ".join((
+            self.title, self.og_title, self.description, self.keywords,
+            *self.headings, *self.json_ld,
+        ))[:6000]
+
+
+def site_categories(text: str) -> tuple[str, ...]:
+    """Infer only explicitly mentioned content categories from page metadata."""
+    return tuple(name for name, pattern in CATEGORY_PATTERNS if pattern.search(text))
 
 
 def _public_dns_host(host: str) -> bool:
@@ -426,16 +471,68 @@ def _public_dns_host(host: str) -> bool:
         return False
 
 
-def scrape_site(session: requests.Session, host: str, joined: set[str], *,
-                timeout: float = 6) -> list[Evidence]:
-    """Scrape a catalog-nominated homepage, respecting robots and byte limits.
+def fetch_sitemap_evidence(
+    session: requests.Session, host: str, robots: RobotFileParser | None, *,
+    timeout: float = 6,
+) -> list[Evidence]:
+    """Read at most one same-origin public sitemap; never recurse into sitemap indexes."""
+    sitemap = f"https://{host}/sitemap.xml"
+    if robots is not None and not robots.can_fetch("ace-hosts/0.1", sitemap):
+        return []
+    try:
+        raw = _fetch(session, sitemap, timeout=timeout, attempts=1,
+                     max_bytes=MAX_HTML_BYTES, content_type="xml")
+        root = ET.fromstring(raw)
+    except (OSError, ValueError, requests.RequestException, ET.ParseError):
+        return []
+    # A sitemap index points to other XML files; do not crawl them.
+    if root.tag.rsplit("}", 1)[-1] != "urlset":
+        return []
+    matching_paths: set[str] = set()
+    categories: set[str] = set()
+    for elem in root.iter():
+        if len(matching_paths) >= MAX_SITEMAP_URLS:
+            break
+        if elem.tag.rsplit("}", 1)[-1] != "loc" or not elem.text:
+            continue
+        try:
+            url = urlsplit(elem.text.strip())
+            if url.scheme != "https" or url.hostname != host or url.port not in (None, 443):
+                continue
+        except ValueError:
+            continue
+        thematic = site_categories(unquote(url.path))
+        if not thematic:
+            continue
+        matching_paths.add(url.path)
+        categories.update(thematic)
+    if len(matching_paths) < 2:
+        return []
+    return [
+        Evidence(host, None, category, (), "site-sitemap", None,
+                 "web-lead", "sitemap-paths")
+        for category in sorted(categories or {"manga"})
+    ]
 
-    The homepage's thematic metadata counts only towards a *reviewable PR
-    proposal*. Outbound links are weak leads and never justify publication.
+
+class PageRenderer(Protocol):
+    def render(self, host: str, *, timeout: float = 6) -> str | None: ...
+
+
+def scrape_site(
+    session: requests.Session, host: str, joined: set[str], *,
+    timeout: float = 6, browser: PageRenderer | None = None,
+    scrape_sitemap: bool = True,
+) -> list[Evidence]:
+    """Inspect a catalog-nominated site; no bypass of robots or access controls.
+
+    Scraping and sitemap URLs are review evidence only. They are never
+    independent source votes and cannot enter a release without a merged PR.
     """
     if not safe_hostname(host) or not _public_dns_host(host):
         return []
     homepage = f"https://{host}/"
+    robots: RobotFileParser | None = None
     try:
         robots_data = _fetch(session, f"https://{host}/robots.txt",
                              timeout=timeout, attempts=1, max_bytes=MAX_HTML_BYTES)
@@ -448,15 +545,43 @@ def scrape_site(session: requests.Session, host: str, joined: set[str], *,
         if not robots.can_fetch("ace-hosts/0.1", homepage):
             logger.info("robots.txt denies homepage scraping: %s", host)
             return []
-    page_bytes = _fetch(session, homepage, timeout=timeout, attempts=1,
-                        max_bytes=MAX_HTML_BYTES, content_type="text/html")
+
+    html = ""
+    try:
+        html = _fetch(session, homepage, timeout=timeout, attempts=1,
+                      max_bytes=MAX_HTML_BYTES, content_type="text/html").decode(
+                          "utf-8", errors="replace"
+                      )
+    except requests.HTTPError as error:
+        if error.response is not None and error.response.status_code in (401, 403, 429):
+            return []
+        if browser is None:
+            raise
+    except (requests.RequestException, ValueError):
+        if browser is None:
+            raise
+
     page = SitePage()
-    page.feed(page_bytes.decode("utf-8", errors="replace"))
-    if not SITE_TERMS.search(page.title + " " + page.description):
+    page.feed(html)
+    categories = site_categories(page.topic_text)
+    rendered_used = False
+    if not categories and browser is not None:
+        rendered = browser.render(host, timeout=timeout)
+        if rendered:
+            page = SitePage()
+            page.feed(rendered)
+            categories = site_categories(page.topic_text)
+            rendered_used = bool(categories)
+    results = [
+        Evidence(host, page.title or None, category, _languages(page.language),
+                 "site-homepage", None, "web-lead",
+                 "html-rendered" if rendered_used else "html-title-description")
+        for category in categories
+    ]
+    if scrape_sitemap:
+        results.extend(fetch_sitemap_evidence(session, host, robots, timeout=timeout))
+    if not results:
         return []
-    record = Evidence(host, page.title or None, "manga", _languages(page.language),
-                      "site-homepage", None, "web-lead", "html-title-description")
-    results = [record]
     for href in page.links:
         candidate = normalize_hostname(urljoin(homepage, href))
         if candidate and candidate != host and candidate in joined and safe_hostname(candidate):
@@ -467,8 +592,10 @@ def scrape_site(session: requests.Session, host: str, joined: set[str], *,
 
 def scrape_catalog_sites(session: requests.Session, records: list[Evidence], joined: set[str],
                          pro: set[str], already_approved: set[str], *,
-                         max_sites: int, timeout: float = 6) -> list[Evidence]:
-    """Select non-Pro catalog sites for bounded public HTML scraping."""
+                         max_sites: int, timeout: float = 6,
+                         browser_fallback: bool = False, max_browser_sites: int = 15,
+                         scrape_sitemaps: bool = True) -> list[Evidence]:
+    """Select relevant catalog sites; reuse one optional, lazy Chromium process."""
     groups: dict[str, set[str]] = defaultdict(set)
     for record in records:
         if record.family not in {"derived", "web-lead"} and safe_hostname(record.hostname):
@@ -480,13 +607,21 @@ def scrape_catalog_sites(session: requests.Session, records: list[Evidence], joi
     ]
     sites.sort(key=lambda host: (-len(groups[host]), -int(host in joined), host))
     scraped: list[Evidence] = []
-    for host in sites[:max_sites]:
-        try:
-            scraped.extend(scrape_site(session, host, joined, timeout=timeout))
-        except (OSError, ValueError, requests.RequestException) as error:
-            logger.info("site %s skipped: %s", host, error)
-    logger.info("site scraping: %d homepages attempted, %d evidence items",
-                min(len(sites), max_sites), len(scraped))
+    browser = BrowserRenderer(max_sites=max_browser_sites) if browser_fallback else None
+    try:
+        for host in sites[:max_sites]:
+            try:
+                scraped.extend(scrape_site(
+                    session, host, joined, timeout=timeout, browser=browser,
+                    scrape_sitemap=scrape_sitemaps,
+                ))
+            except (OSError, ValueError, requests.RequestException) as error:
+                logger.info("site %s skipped: %s", host, error)
+    finally:
+        if browser is not None:
+            browser.close()
+    logger.info("site scraping: %d homepages, %d browser fallbacks, %d evidence items",
+                min(len(sites), max_sites), browser.attempts if browser else 0, len(scraped))
     return scraped
 
 
@@ -662,6 +797,9 @@ class DiscoveryArgs(argparse.Namespace):
     require_core_catalogs: bool = False
     scrape_sites: bool = False
     max_scrape_sites: int = 60
+    browser_fallback: bool = False
+    max_browser_sites: int = 15
+    scrape_sitemaps: bool = True
     directory_url: list[str] | None = None
     brave_search: bool = False
     queries_file: Path | None = None
@@ -685,6 +823,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="Scrape public HTML metadata of catalog-nominated anime sites")
     parser.add_argument("--max-scrape-sites", type=int, default=60,
                         help="Maximum HTTPS homepages to scrape (1..120, default 60)")
+    parser.add_argument("--browser-fallback", action="store_true",
+                        help="Use bounded headless Chromium if static HTML lacks thematic metadata")
+    parser.add_argument("--max-browser-sites", type=int, default=15,
+                        help="Limit dynamic browser rendering attempts (1..30, default 15)")
+    parser.add_argument("--no-sitemaps", dest="scrape_sitemaps", action="store_false",
+                        help="Do not inspect the same-origin /sitemap.xml")
     parser.add_argument("--queries-file", type=Path, help="JSON map of language to search query")
     parser.add_argument("--directory-url", action="append", default=[],
                         help="Opt-in public directory (one HTML page, robots respected)")
@@ -695,6 +839,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv, namespace=DiscoveryArgs())
     if not 1 <= args.max_scrape_sites <= 120:
         parser.error("--max-scrape-sites must be between 1 and 120")
+    if not 1 <= args.max_browser_sites <= 30:
+        parser.error("--max-browser-sites must be between 1 and 30")
     utils.setup_logging()
     records: list[Evidence] = []
     succeeded: set[str] = set()
@@ -731,7 +877,10 @@ def main(argv: list[str] | None = None) -> int:
             approved = _load_hostnames(args.approved_file)
             records.extend(scrape_catalog_sites(
                 session, records, joined, pro, approved,
-                max_sites=args.max_scrape_sites, timeout=min(args.timeout, 6)
+                max_sites=args.max_scrape_sites, timeout=min(args.timeout, 6),
+                browser_fallback=args.browser_fallback,
+                max_browser_sites=args.max_browser_sites,
+                scrape_sitemaps=args.scrape_sitemaps,
             ))
     if args.require_core_catalogs and not {"mangayomi", "aidoku", "miru", "lnreader"} <= succeeded:
         logger.error("at least one core independent catalog is missing; refusing to publish")

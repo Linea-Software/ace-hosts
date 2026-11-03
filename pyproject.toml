@@ -16,9 +16,10 @@ classifiers = [
     "Topic :: System :: Networking",
 ]
 # Direct dependencies are pinned exactly to the latest available versions
-# as of 2026-10-10 (resolved with `uv add`; re-run it to refresh). Transitive
+# from verified resolutions (updated 2026-11-03); transitive
 # dependencies are resolved and locked deterministically in uv.lock.
 dependencies = [
+    "playwright==1.64.1",
     "python-dotenv==1.2.4",
     "requests==2.34.2",
     "tqdm==4.70.1",
