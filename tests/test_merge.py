@@ -214,3 +214,30 @@ def test_utils_atomic_write(tmp_path: Path):
     target = tmp_path / "atomic.txt"
     utils.atomic_write_lines(target, ["a", "b"])
     assert target.read_text(encoding="utf-8") == "a\nb\n"
+
+
+def test_upstream_single_label_never_enters_a_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Regression: release #8 failed after merging a bare one-label upstream token."""
+    from scripts.validate_category_outputs import validate_category
+
+    download_dir = tmp_path / "downloads"
+    category_dir = download_dir / "adult-extended"
+    source = _write(category_dir, "upstream.txt", (
+        "amateuranalblowjobblonde\n"
+        "127.0.0.1 amateuranalblowjobblonde example.com\n"
+        "||singlelabel^\n"
+        "0.0.0.0 another.example.org\n"
+    ))
+    _write(category_dir, source_catalog.DOWNLOAD_MANIFEST, source.name + "\n")
+    hosts_dir = tmp_path / "hosts"
+    exceptions_dir = tmp_path / "exceptions"
+    monkeypatch.setenv("DOWNLOAD_DIR", str(download_dir))
+    monkeypatch.setenv("OUTPUT_DIR", str(hosts_dir))
+    monkeypatch.setenv("EXCEPTIONS_DIR", str(exceptions_dir))
+    monkeypatch.setenv("WHITELIST_FILE", str(tmp_path / "whitelist.txt"))
+
+    assert merge_hosts.main(["--category", "adult-extended", "--no-progress"]) == 0
+    merged = hosts_dir / "adult-extended.txt"
+    assert list(utils.iter_domains(merged)) == ["another.example.org", "example.com"]
+    assert "amateuranalblowjobblonde" not in merged.read_text(encoding="utf-8")
+    assert validate_category("adult-extended", hosts_dir, download_dir, exceptions_dir, set()) == (2, 1)

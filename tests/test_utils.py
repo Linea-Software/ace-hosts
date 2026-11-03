@@ -37,7 +37,7 @@ def test_extract_domains_ignores_junk():
     assert utils.extract_domains("#") == []
     assert utils.extract_domains("0.0.0.0") == []
     assert utils.extract_domains("127.0.0.1") == []
-    assert utils.extract_domains("not a domain!") == ["not", "a"]
+    assert utils.extract_domains("not a domain!") == []
     assert utils.extract_domains("0.0.0.0 -bad.example.com") == []
     assert utils.extract_domains("0.0.0.0 bad..example.com") == []
     assert utils.extract_domains("0.0.0.0 bad_example.com") == ["bad_example.com"]
@@ -57,7 +57,7 @@ def test_is_valid_domain():
     assert utils.is_valid_domain("example.com")
     assert utils.is_valid_domain("sub.domain.example.co.uk")
     assert utils.is_valid_domain("xn--porn-hab.example")
-    assert utils.is_valid_domain("singlelabel")
+    assert not utils.is_valid_domain("singlelabel")
     assert not utils.is_valid_domain("-leading.example.com")
     assert not utils.is_valid_domain("trailing-.example.com")
     assert not utils.is_valid_domain("double..dot.example.com")

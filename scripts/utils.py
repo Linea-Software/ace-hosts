@@ -93,8 +93,12 @@ def setup_logging(level: str = "INFO") -> None:
 
 
 def is_valid_domain(domain: str) -> bool:
-    """Return True if *domain* is a plausible hostname."""
-    return bool(_DOMAIN_RE.match(domain))
+    """Accept public-style DNS names with at least two labels.
+
+    A single-label token may be accepted by the permissive regex, but cannot
+    pass the release validator and must never reach generated host lists.
+    """
+    return "." in domain and bool(_DOMAIN_RE.fullmatch(domain))
 
 
 def extract_domains(line: str) -> list[str]:
