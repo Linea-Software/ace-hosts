@@ -21,7 +21,8 @@ but now builds independent lists for:
 - **streaming** — video/audio streaming and entertainment services
 - **dating** — dating and matchmaking sites
 - **shopping** — online shopping and commerce sites
-- **anime-manga** — anime, manga, manhwa, manhua, webtoons and related novels
+- **anime-manga** — anime, manga, manhwa, manhua, webtoons and related novels (curated Pro)
+- **anime-manga-extended** — optional evidence-filtered Extended list with independent catalog corroboration
 - **forums** — discussion forums and community websites
 - **news** — news and online press
 - **sports** — sports portals and scores
@@ -39,7 +40,7 @@ produce one SQLite backup ZIP such as `site-pack-adult-free.zip` or
 
 ## Features
 
-- **Fourteen behavioural categories** with a central source catalog in
+- **Fifteen behavioural categories** with a central source catalog in
   `scripts/source_catalog.py`.
 - **Format-tolerant parsing** for classic hosts files, bare domains, Adblock
   syntax (`||domain^`), wildcards, URLs, inline comments, BOMs and CRLF.
@@ -116,6 +117,7 @@ hosts/
 ├── dating.txt
 ├── shopping.txt
 ├── anime-manga.txt
+├── anime-manga-extended.txt
 ├── forums.txt
 ├── news.txt
 ├── sports.txt
@@ -129,6 +131,7 @@ hosts/
 ├── site-pack-streaming-pro.zip
 ├── site-pack-shopping-pro.zip
 ├── site-pack-anime-manga-pro.zip
+├── site-pack-anime-manga-extended.zip
 ├── site-pack-forums-pro.zip
 ├── site-pack-news-pro.zip
 ├── site-pack-sports-pro.zip
@@ -212,6 +215,8 @@ Validates the generated release directory and exits with an error when any file
 is larger than 2 GiB. The release workflow runs this check before checksums and
 publication.
 
+For the evidence-led anime/manga discovery workflow, conservative validation, multilingual optional search, licenses and manual approvals, see [Anime/Manga discovery documentation](docs/anime-manga-discovery.md).
+
 ## Built-in categories and sources
 
 The catalog intentionally targets **behavioural/distraction blocking**, not a
@@ -228,7 +233,8 @@ mixed into these categories.
 | streaming | UT1 `audio-video`; Block List Project YouTube; AdGuard `streaming` services |
 | dating | UT1 `dating`; ShadowWhisperer Dating; AdGuard `dating` services |
 | shopping | UT1 `shopping`; AdGuard `shopping` services |
-| anime-manga | UT1 `manga`; newedgex `ani-manga-blocklist` refined list; curated ACE seeds for official manga, Korean manhwa/webtoons, Chinese manhua and web novels |
+| anime-manga | UT1 manga; newedgex refined; manually curated ACE seeds (Pro) |
+| anime-manga-extended | newedgex joined **only as a candidate source**; Pro plus independently corroborated extension catalogs or manually reviewed seeds; never a raw 103k-host import |
 | forums | UT1 `forums` |
 | news | UT1 `press` |
 | sports | UT1 `sports` |

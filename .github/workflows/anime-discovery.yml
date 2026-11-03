@@ -1,0 +1,39 @@
+name: Anime Manga discovery (review only)
+
+on:
+  schedule:
+    - cron: "30 4 * * 3"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: anime-manga-discovery
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked
+      - name: Fetch curated and joined sources
+        run: |
+          uv run python scripts/download_sources.py --category anime-manga --no-rate-limit
+          uv run python scripts/download_sources.py --category anime-manga-extended --no-rate-limit
+      - name: Build existing curated Pro baseline
+        run: uv run python scripts/merge_hosts.py --category anime-manga --no-progress
+      - name: Collect independent catalog evidence
+        run: uv run python scripts/anime_discovery.py --refresh
+      - name: Publish review artifacts, NOT blocklists
+        uses: actions/upload-artifact@v6
+        with:
+          name: anime-manga-discovery-review
+          path: |
+            downloads/anime-discovery/candidates.jsonl
+            downloads/anime-discovery/summary.json
+            downloads/anime-discovery/eligible-extended.txt
+          retention-days: 30

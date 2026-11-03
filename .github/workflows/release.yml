@@ -33,6 +33,12 @@ jobs:
       - name: Clean output
         run: rm -f hosts/*
 
+      - name: Build curated Anime/Manga Pro first
+        run: uv run python scripts/merge_hosts.py --category anime-manga --no-progress
+
+      - name: Validate discovery candidates before publication
+        run: uv run python scripts/anime_discovery.py --refresh --require-core-catalogs
+
       - name: Merge categories
         run: uv run python scripts/merge_hosts.py --all-categories --no-progress
 
@@ -71,6 +77,7 @@ jobs:
             "dating:hosts/dating.txt" \
             "shopping:hosts/shopping.txt" \
             "anime-manga:hosts/anime-manga.txt" \
+            "anime-manga-extended:hosts/anime-manga-extended.txt" \
             "forums:hosts/forums.txt" \
             "news:hosts/news.txt" \
             "sports:hosts/sports.txt" \
