@@ -220,18 +220,18 @@ mixed into these categories.
 | --- | --- |
 | adult | StevenBlack `porn-only`; HaGeZi NSFW |
 | adult-extended | StevenBlack `porn-only`; Block List Project porn; 4skinSkywalker Anti-Porn; tiuxo porn; saskuu porno; StbanMc CommunityBlocklists porn; zangadoprojets Pornpages; HaGeZi NSFW; Sinfonietta pornography; chadmayfield porn; Energized Porn |
-| gaming | UT1 `games`; Block List Project Fortnite |
-| social | HaGeZi Social Networks; StevenBlack `social-only`; UT1 `social_networks`; Block List Project Facebook, TikTok, Twitter/X and WhatsApp |
-| gambling | HaGeZi Gambling Mini; ShadowWhisperer Gambling; Block List Project gambling; StevenBlack `gambling-only`; UT1 `gambling` |
-| streaming | UT1 `audio-video`; Block List Project YouTube |
-| dating | UT1 `dating`; ShadowWhisperer Dating |
-| shopping | UT1 `shopping` |
+| gaming | UT1 `games`; Block List Project Fortnite; AdGuard `gaming` services |
+| social | HaGeZi Social Networks; StevenBlack `social-only`; UT1 `social_networks`; Block List Project Facebook, TikTok, Twitter/X and WhatsApp; AdGuard `social_network` services |
+| gambling | HaGeZi Gambling Mini; ShadowWhisperer Gambling; Block List Project gambling; StevenBlack `gambling-only`; UT1 `gambling`; AdGuard `gambling` services |
+| streaming | UT1 `audio-video`; Block List Project YouTube; AdGuard `streaming` services |
+| dating | UT1 `dating`; ShadowWhisperer Dating; AdGuard `dating` services |
+| shopping | UT1 `shopping`; AdGuard `shopping` services |
 | anime-manga | UT1 `manga`; newedgex `ani-manga-blocklist` refined list; curated ACE seeds for official manga, Korean manhwa/webtoons, Chinese manhua and web novels |
 | forums | UT1 `forums` |
 | news | UT1 `press` |
 | sports | UT1 `sports` |
-| messaging | UT1 `chat`; nickoppen Discord, Messenger, Signal, Telegram, Viber and Snapchat |
-| ai-tools | UT1 `ai`; ShadowWhisperer AI |
+| messaging | UT1 `chat`; nickoppen Discord, Messenger, Signal, Telegram, Viber and Snapchat; AdGuard `messenger` services |
+| ai-tools | UT1 `ai`; ShadowWhisperer AI; AdGuard `ai` services |
 
 Exact raw URLs, source homepages and license labels live in
 [`scripts/source_catalog.py`](scripts/source_catalog.py), making source changes
@@ -253,6 +253,7 @@ but fails if no selected source succeeds.
   plus HaGeZi's NSFW-only domains back the default/free Ace adult site pack.
 - The `adult-extended` category retains the previous multi-source adult catalog
   for the extended/Pro site pack.
+- **AdGuard service catalog:** the eight applicable built-in categories also normalize the public `services.json` registry by AdGuard service group. The JSON is never merged raw: the downloader converts only exact hostname DNS rules to domains, discards unsupported filter syntax and known shared infrastructure, and rejects empty or malformed registry output. The normal success manifest prevents stale files from being reused. AdGuard's source is GPL-3.0; review the category-specific output before distribution.
 - **Social, gambling and dating** incorporate the focused HaGeZi and ShadowWhisperer sources. Messaging combines the UT1 chat directory with app-specific nickoppen Pi-hole lists. Always review category and platform false positives.
 - **Anime/manga/manhwa/manhua** combines UT1 manga and the GPL-3.0 `newedgex/ani-manga-blocklist` refined domain list with `seeds/anime-manga.txt` (first-party curated platform hosts). The larger community list may include unrelated sites: maintain `exceptions/anime-manga.txt` and audit false positives before each release.
 

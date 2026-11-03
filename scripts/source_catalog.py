@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
+
+from scripts.adguard_services import ADGUARD_HOMEPAGE, ADGUARD_SERVICES_URL
 
 DEFAULT_CATEGORY = "adult"
 DOWNLOAD_MANIFEST = ".ace-hosts-sources"
@@ -16,6 +19,7 @@ class Source:
     url: str
     license: str
     homepage: str
+    kind: Literal["domains", "adguard-services"] = "domains"
 
 
 CATEGORY_DESCRIPTIONS: dict[str, str] = {
@@ -123,6 +127,13 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
     ),
     "gaming": (
         Source(
+            "adguard-services.txt",
+            ADGUARD_SERVICES_URL,
+            "GPL-3.0",
+            ADGUARD_HOMEPAGE,
+            kind="adguard-services",
+        ),
+        Source(
             "ut1-games",
             "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/games/domains",
             "CC BY-SA 4.0",
@@ -136,6 +147,13 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
         ),
     ),
     "social": (
+        Source(
+            "adguard-services.txt",
+            ADGUARD_SERVICES_URL,
+            "GPL-3.0",
+            ADGUARD_HOMEPAGE,
+            kind="adguard-services",
+        ),
         Source(
             "hagezi-social",
             "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/social-onlydomains.txt",
@@ -181,6 +199,13 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
     ),
     "gambling": (
         Source(
+            "adguard-services.txt",
+            ADGUARD_SERVICES_URL,
+            "GPL-3.0",
+            ADGUARD_HOMEPAGE,
+            kind="adguard-services",
+        ),
+        Source(
             "hagezi-gambling-mini",
             "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/gambling.mini-onlydomains.txt",
             "GPL-3.0",
@@ -213,6 +238,13 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
     ),
     "streaming": (
         Source(
+            "adguard-services.txt",
+            ADGUARD_SERVICES_URL,
+            "GPL-3.0",
+            ADGUARD_HOMEPAGE,
+            kind="adguard-services",
+        ),
+        Source(
             "ut1-audio-video",
             "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/audio-video/domains",
             "CC BY-SA 4.0",
@@ -227,6 +259,13 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
     ),
     "dating": (
         Source(
+            "adguard-services.txt",
+            ADGUARD_SERVICES_URL,
+            "GPL-3.0",
+            ADGUARD_HOMEPAGE,
+            kind="adguard-services",
+        ),
+        Source(
             "shadowwhisperer-dating",
             "https://raw.githubusercontent.com/ShadowWhisperer/BlockLists/master/Lists/Dating",
             "Unlicense",
@@ -240,6 +279,13 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
         ),
     ),
     "shopping": (
+        Source(
+            "adguard-services.txt",
+            ADGUARD_SERVICES_URL,
+            "GPL-3.0",
+            ADGUARD_HOMEPAGE,
+            kind="adguard-services",
+        ),
         Source(
             "ut1-shopping",
             "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/shopping/domains",
@@ -287,6 +333,13 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
     ),
     "messaging": (
         Source(
+            "adguard-services.txt",
+            ADGUARD_SERVICES_URL,
+            "GPL-3.0",
+            ADGUARD_HOMEPAGE,
+            kind="adguard-services",
+        ),
+        Source(
             "ut1-chat",
             "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/chat/domains",
             "CC BY-SA 4.0",
@@ -330,6 +383,13 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
         ),
     ),
     "ai-tools": (
+        Source(
+            "adguard-services.txt",
+            ADGUARD_SERVICES_URL,
+            "GPL-3.0",
+            ADGUARD_HOMEPAGE,
+            kind="adguard-services",
+        ),
         Source(
             "ut1-ai",
             "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/ai/domains",

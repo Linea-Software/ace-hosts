@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from collections.abc import Callable
 
 import requests
 from tqdm import tqdm
@@ -22,7 +23,7 @@ from tqdm import tqdm
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts import source_catalog, utils
+from scripts import adguard_services, source_catalog, utils
 
 logger = logging.getLogger("ace-hosts.download")
 
@@ -93,6 +94,7 @@ def download_source(
     retries: int,
     backoff: float,
     user_agent: str,
+    postprocess: Callable[[Path], None] | None = None,
 ) -> int | None:
     """Download one source atomically into *dest_dir*; return bytes or None.
 
@@ -127,6 +129,8 @@ def download_source(
                             continue
                         handle.write(chunk)
                         progress.update(len(chunk))
+            if postprocess is not None:
+                postprocess(Path(tmp_name))
             size = Path(tmp_name).stat().st_size
             if size == 0:
                 raise ValueError("empty response body")
@@ -179,7 +183,12 @@ def _download_category(
     total_bytes = 0
     downloaded_files: list[str] = []
     source_items = list(sources.items())
+    builtins = {source.name: source for source in source_catalog.CATEGORY_SOURCES[category]}
     for index, (name, url) in enumerate(source_items):
+        builtin = builtins.get(name)
+        postprocess: Callable[[Path], None] | None = None
+        if builtin is not None and builtin.url == url and builtin.kind == "adguard-services":
+            postprocess = lambda path, cat=category: adguard_services.normalize_registry_file(path, cat)
         size = download_source(
             name,
             url,
@@ -188,6 +197,7 @@ def _download_category(
             retries=int(config["RETRIES"]),
             backoff=float(config["RETRY_BACKOFF"]),
             user_agent=config["USER_AGENT"],
+            postprocess=postprocess,
         )
         if size is None:
             failed_count += 1
