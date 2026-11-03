@@ -1,0 +1,8 @@
+# False positives and shared infrastructure from broad community anime/manga lists.
+# These exact hosts are not genre-specific; do not exclude their subdomains blindly.
+aka.ms
+angelfire.com
+apkpure.com
+artstation.com
+3.nhk.or.jp
+api.w.org

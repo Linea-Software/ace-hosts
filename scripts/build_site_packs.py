@@ -45,6 +45,7 @@ SITE_PACKS: tuple[SitePackDefinition, ...] = (
     SitePackDefinition("pack-gambling-pro", "Gambling Websites — Pro", "gambling"),
     SitePackDefinition("pack-streaming-pro", "Streaming Websites — Pro", "streaming"),
     SitePackDefinition("pack-shopping-pro", "Shopping Websites — Pro", "shopping"),
+    SitePackDefinition("pack-anime-manga-pro", "Anime & Manga Websites — Pro", "anime-manga"),
 )
 
 _SCHEMA_SQL = """

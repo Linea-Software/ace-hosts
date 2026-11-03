@@ -165,6 +165,13 @@ def _merge_category(
     exceptions_dir: Path | None,
 ) -> int:
     files = resolve_input_files(args.input or [], config, category)
+    using_builtin_inputs = not (args.input or []) and not config.get("INPUT_FILES", "").strip()
+    if using_builtin_inputs:
+        # Small, reviewed first-party additions supplement downloaded upstream lists.
+        # Explicit --input operations intentionally remain completely self-contained.
+        seeds = utils.PROJECT_ROOT / "seeds" / f"{category}.txt"
+        if seeds.is_file():
+            files.append(seeds)
     if not files:
         logger.error(
             "%s: no input files found — run `ace-hosts-download --category %s` first",

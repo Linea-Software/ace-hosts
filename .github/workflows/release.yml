@@ -66,7 +66,8 @@ jobs:
             "gambling:hosts/gambling.txt" \
             "streaming:hosts/streaming.txt" \
             "dating:hosts/dating.txt" \
-            "shopping:hosts/shopping.txt"; do
+            "shopping:hosts/shopping.txt" \
+            "anime-manga:hosts/anime-manga.txt"; do
             category="${entry%%:*}"
             file="${entry#*:}"
             count=$(grep -m1 '^# Entries:' "$file" | awk '{print $3}')

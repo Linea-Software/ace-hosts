@@ -1,0 +1,37 @@
+# ACE-curated category targets: anime, manga, manhwa, manhua, webtoons and novels.
+# These first-party selectors supplement the upstream UT1 and ani-manga lists.
+# Keep sites specific to the category; avoid general-purpose hosts and CDNs.
+# Anime / tracking / streaming
+anilist.co
+myanimelist.net
+anime-planet.com
+animenewsnetwork.com
+crunchyroll.com
+hidive.com
+livechart.me
+# Japanese manga
+mangadex.org
+mangaplus.shueisha.co.jp
+mangamo.com
+manga-up.com
+# Korean webtoons / manhwa
+webtoons.com
+kakaowebtoon.com
+page.kakao.com
+tapas.io
+tappytoon.com
+lezhin.com
+lezhinus.com
+manta.net
+toomics.com
+pocketcomics.com
+bomtoon.com
+# Chinese manhua
+kuaikanmanhua.com
+ac.qq.com
+manga.bilibili.com
+manhuagui.com
+# Related web novels
+wuxiaworld.com
+novelupdates.com
+webnovel.com

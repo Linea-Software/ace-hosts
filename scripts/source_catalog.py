@@ -27,6 +27,7 @@ CATEGORY_DESCRIPTIONS: dict[str, str] = {
     "streaming": "Video/audio streaming and entertainment services",
     "dating": "Dating and matchmaking websites",
     "shopping": "Online shopping and commerce websites",
+    "anime-manga": "Anime, manga, manhwa, manhua, webtoons and related reading platforms",
 }
 
 # Keep category sources deliberately focused. General ad/malware/tracker lists do
@@ -215,6 +216,20 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
             "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/shopping/domains",
             "CC BY-SA 4.0",
             "https://dsi.ut-capitole.fr/blacklists/",
+        ),
+    ),
+    "anime-manga": (
+        Source(
+            "ut1-manga",
+            "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/manga/domains",
+            "CC BY-SA 4.0",
+            "https://dsi.ut-capitole.fr/blacklists/",
+        ),
+        Source(
+            "newedgex-ani-manga",
+            "https://raw.githubusercontent.com/newedgex/ani-manga-blocklist/main/refined-blacklist.txt",
+            "GPL-3.0",
+            "https://github.com/newedgex/ani-manga-blocklist",
         ),
     ),
 }

@@ -21,6 +21,7 @@ but now builds independent lists for:
 - **streaming** — video/audio streaming and entertainment services
 - **dating** — dating and matchmaking sites
 - **shopping** — online shopping and commerce sites
+- **anime-manga** — anime, manga, manhwa, manhua, webtoons and related novels
 
 The categories stay separate end-to-end: sources download into
 `downloads/<category>/`, each merge consumes only that category's successful
@@ -33,7 +34,7 @@ produce one SQLite backup ZIP such as `site-pack-adult-free.zip` or
 
 ## Features
 
-- **Eight behavioural categories** with a central source catalog in
+- **Nine behavioural categories** with a central source catalog in
   `scripts/source_catalog.py`.
 - **Format-tolerant parsing** for classic hosts files, bare domains, Adblock
   syntax (`||domain^`), wildcards, URLs, inline comments, BOMs and CRLF.
@@ -43,6 +44,7 @@ produce one SQLite backup ZIP such as `site-pack-adult-free.zip` or
   succeeded during that run; automatic merging follows the manifest rather
   than blindly merging old files left in the directory.
 - **Global whitelist support** via `whitelist.txt`, plus exact-domain **category exceptions** via `exceptions/<category>.txt`.
+- **Optional curated category seeds** in `seeds/<category>.txt`, merged with successful built-in source downloads (not with explicit `--input`).
 - **Deterministic output** through deduplication and sorting.
 - **Whole-file releases** — merged lists and site-pack ZIPs are never split;
   release validation fails if any generated asset exceeds 2 GiB.
@@ -106,6 +108,7 @@ hosts/
 ├── streaming.txt
 ├── dating.txt
 ├── shopping.txt
+├── anime-manga.txt
 ├── site-pack-adult-free.zip
 ├── site-pack-adult-pro.zip
 ├── site-pack-gaming-free.zip
@@ -113,6 +116,7 @@ hosts/
 ├── site-pack-gambling-pro.zip
 ├── site-pack-streaming-pro.zip
 ├── site-pack-shopping-pro.zip
+├── site-pack-anime-manga-pro.zip
 └── sha256_checksums.txt   # release workflow
 ```
 
@@ -170,7 +174,9 @@ falls back to files under `downloads/<category>/`.
 `whitelist.txt` is intentionally global. Category-specific false positives
 belong in `exceptions/<category>.txt`; only exact hostnames are removed, so an
 exception for `sub.example.com` does not implicitly exempt `example.com` or
-other subdomains.
+other subdomains. When running the built-in pipeline, optional reviewed
+`seeds/<category>.txt` entries are merged with the downloaded sources. Explicit
+`--input` operations never implicitly include seeds.
 
 ### `build_site_packs.py`
 
@@ -204,6 +210,7 @@ mixed into these categories.
 | streaming | UT1 `audio-video`; Block List Project YouTube |
 | dating | UT1 `dating` |
 | shopping | UT1 `shopping` |
+| anime-manga | UT1 `manga`; newedgex `ani-manga-blocklist` refined list; curated ACE seeds for official manga, Korean manhwa/webtoons, Chinese manhua and web novels |
 
 Exact raw URLs, source homepages and license labels live in
 [`scripts/source_catalog.py`](scripts/source_catalog.py), making source changes
@@ -225,6 +232,7 @@ but fails if no selected source succeeds.
   plus HaGeZi's NSFW-only domains back the default/free Ace adult site pack.
 - The `adult-extended` category retains the previous multi-source adult catalog
   for the extended/Pro site pack.
+- **Anime/manga/manhwa/manhua** combines UT1 manga and the GPL-3.0 `newedgex/ani-manga-blocklist` refined domain list with `seeds/anime-manga.txt` (first-party curated platform hosts). The larger community list may include unrelated sites: maintain `exceptions/anime-manga.txt` and audit false positives before each release.
 
 ## Licensing of generated data
 
@@ -296,7 +304,10 @@ not a unit-test dependency.
 
 - **False positives / missing domains:** open an issue or PR.
 - **New category/source:** edit `scripts/source_catalog.py` and document the
-  upstream license/homepage.
+  upstream license/homepage. Add a `SITE_PACKS` definition for Ace-managed
+  categories, and update the release notes list in `.github/workflows/release.yml`.
+- **Curated category hosts:** edit `seeds/<category>.txt`; only list actual
+  platform hostnames, never shared hosting or CDN domains.
 - **Global whitelist:** use `whitelist.txt` only for domains that should never appear in any category.
 - **Category false positive:** add the exact hostname to `exceptions/<category>.txt`.
 - **Generated files:** do not edit `hosts/*` or `downloads/*` by hand.
