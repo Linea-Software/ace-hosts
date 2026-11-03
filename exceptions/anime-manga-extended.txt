@@ -1,0 +1,2 @@
+# Extended-only false positives (exact hostname match).
+# The Pro exceptions/anime-manga.txt are also inherited automatically.

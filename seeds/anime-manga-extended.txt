@@ -1,0 +1,3 @@
+# Reviewed Extended-only hostname approvals.
+# Add exact site hosts only after manual review and record rationale in the PR.
+# Do not add shared infrastructure, search engines, social networks or code hosting.

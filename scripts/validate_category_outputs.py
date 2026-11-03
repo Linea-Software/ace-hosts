@@ -39,6 +39,8 @@ def validate_category(
     if not path.is_file():
         raise ValueError(f"{category}: missing merged hosts output {path}")
     exclusions = global_whitelist | merge_hosts.load_category_exceptions(exceptions_dir, category)
+    if category == "anime-manga-extended":
+        exclusions |= merge_hosts.load_category_exceptions(exceptions_dir, "anime-manga")
     metadata: dict[str, str] = {}
     previous = ""
     count = 0
@@ -95,6 +97,19 @@ def validate_all_categories(
         )
         count, sources = results[category]
         logger.info("%s: %d domains from %d successful source(s)", category, count, sources)
+    if "anime-manga-extended" in results:
+        from scripts.anime_discovery import safe_hostname
+
+        pro = set(utils.iter_domains(hosts_dir / "anime-manga.txt"))
+        extended = set(utils.iter_domains(hosts_dir / "anime-manga-extended.txt"))
+        if len(pro) < 4000 or len(extended) < len(pro):
+            raise ValueError("anime/manga output unexpectedly short")
+        if not pro <= extended:
+            raise ValueError("Extended must contain every Pro hostname")
+        if any(not safe_hostname(domain) for domain in extended):
+            raise ValueError("shared infrastructure or reserved domain in Extended")
+        if len(extended - pro) > max(3000, len(pro) // 2):
+            raise ValueError("anomalous Extended growth requires manual review")
     return results
 
 

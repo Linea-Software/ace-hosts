@@ -134,6 +134,37 @@ def merge_files(
     return ordered, stats
 
 
+def _extended_domains(
+    files: list[Path],
+    config: dict[str, str],
+    excluded: set[str],
+) -> tuple[list[str], dict[str, int]]:
+    """Publish Pro plus *validated* candidates, never merge the joined list raw."""
+    from scripts.anime_discovery import safe_hostname
+
+    pro_path = default_output_path("anime-manga", config)
+    eligible_path = _configured_dir(config["DOWNLOAD_DIR"]) / "anime-discovery" / "eligible-extended.txt"
+    if not pro_path.is_file() or not eligible_path.is_file():
+        raise ValueError("Extended requires a fresh Pro merge and discovery eligibility report")
+    pro = set(utils.iter_domains(pro_path))
+    eligible = set(utils.iter_domains(eligible_path))
+    joined: set[str] = set()
+    for path in files:
+        joined.update(utils.iter_domains(path))
+    if not pro or not joined:
+        raise ValueError("Extended requires nonempty Pro and joined sources")
+    additional = eligible - pro
+    if len(additional) > max(3000, len(pro) // 2):
+        raise ValueError("unexpected Extended growth requires manual review")
+    # If an explicitly approved site was not in joined, it can still appear
+    # in the eligibility report. Independent-source verification is performed
+    # by anime_discovery, not re-inferred from raw joined strings here.
+    domains = sorted(host for host in pro | eligible if host not in excluded and safe_hostname(host))
+    stats = {"files": len(files) + 2, "raw_domains": len(pro) + len(joined),
+             "whitelisted": len((pro | eligible) - set(domains)), "unique": len(domains)}
+    return domains, stats
+
+
 def default_output_path(category: str, config: dict[str, str]) -> Path:
     """Return the default merged output for one category."""
     output_dir = _configured_dir(config["OUTPUT_DIR"])
@@ -183,7 +214,23 @@ def _merge_category(
     dedupe = not args.no_dedupe and utils.config_bool(config["REMOVE_DUPLICATES"])
     category_exceptions = load_category_exceptions(exceptions_dir, category)
     excluded_domains = whitelist_domains | category_exceptions
-    domains, stats = merge_files(files, excluded_domains, dedupe=dedupe, show_progress=not args.no_progress)
+    if category == "anime-manga-extended":
+        excluded_domains |= load_category_exceptions(exceptions_dir, "anime-manga")
+    if category == "anime-manga-extended" and using_builtin_inputs:
+        try:
+            domains, stats = _extended_domains(files, config, excluded_domains)
+        except ValueError as error:
+            logger.error("%s: %s", category, error)
+            return 1
+        files = [*files, default_output_path("anime-manga", config)]
+    else:
+        domains, stats = merge_files(files, excluded_domains, dedupe=dedupe, show_progress=not args.no_progress)
+    if category == "anime-manga" and using_builtin_inputs:
+        from scripts.anime_discovery import safe_hostname
+        before = len(domains)
+        domains = [host for host in domains if safe_hostname(host)]
+        stats["shared_excluded"] = before - len(domains)
+        stats["unique"] = len(domains)
     if not args.no_sort and utils.config_bool(config["SORT_OUTPUT"]):
         domains.sort()
 

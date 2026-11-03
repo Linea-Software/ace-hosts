@@ -32,6 +32,7 @@ CATEGORY_DESCRIPTIONS: dict[str, str] = {
     "dating": "Dating and matchmaking websites",
     "shopping": "Online shopping and commerce websites",
     "anime-manga": "Anime, manga, manhwa, manhua, webtoons and related reading platforms",
+    "anime-manga-extended": "Optional evidence-filtered anime/manga Extended list",
     "forums": "Discussion forums and Q&A communities",
     "news": "News sites and online press",
     "sports": "Sports news, results and communities",
@@ -304,6 +305,14 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
             "newedgex-ani-manga",
             "https://raw.githubusercontent.com/newedgex/ani-manga-blocklist/main/refined-blacklist.txt",
             "GPL-3.0",
+            "https://github.com/newedgex/ani-manga-blocklist",
+        ),
+    ),
+    "anime-manga-extended": (
+        Source(
+            "newedgex-joined",
+            "https://raw.githubusercontent.com/newedgex/ani-manga-blocklist/main/lists/joined-blacklist.txt",
+            "GPL-3.0; combined with Pro (UT1 CC BY-SA 4.0)",
             "https://github.com/newedgex/ani-manga-blocklist",
         ),
     ),

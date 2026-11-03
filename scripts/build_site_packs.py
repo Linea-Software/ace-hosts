@@ -46,6 +46,7 @@ SITE_PACKS: tuple[SitePackDefinition, ...] = (
     SitePackDefinition("pack-streaming-pro", "Streaming Websites — Pro", "streaming"),
     SitePackDefinition("pack-shopping-pro", "Shopping Websites — Pro", "shopping"),
     SitePackDefinition("pack-anime-manga-pro", "Anime & Manga Websites — Pro", "anime-manga"),
+    SitePackDefinition("pack-anime-manga-extended", "Anime & Manga Websites — Extended", "anime-manga-extended"),
     SitePackDefinition("pack-forums-pro", "Forums & Communities — Pro", "forums"),
     SitePackDefinition("pack-news-pro", "News Websites — Pro", "news"),
     SitePackDefinition("pack-sports-pro", "Sports Websites — Pro", "sports"),

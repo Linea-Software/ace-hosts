@@ -37,13 +37,13 @@ def test_merge_includes_seeds_and_category_specific_exceptions(
     download = tmp_path / "downloads" / "anime-manga"
     download.mkdir(parents=True)
     (download / "ut1.txt").write_text(
-        "mangadex.org\ncommunity.example\naka.ms\n", encoding="utf-8"
+        "mangadex.org\ncommunity-fiction.org\naka.ms\n", encoding="utf-8"
     )
     (download / source_catalog.DOWNLOAD_MANIFEST).write_text("ut1.txt\n", encoding="utf-8")
     seeds = tmp_path / "seeds"
     seeds.mkdir()
     (seeds / "anime-manga.txt").write_text(
-        "webtoons.com\ncommunity.example\n", encoding="utf-8"
+        "webtoons.com\ncommunity-fiction.org\n", encoding="utf-8"
     )
     exceptions = tmp_path / "exceptions"
     exceptions.mkdir()
@@ -57,7 +57,7 @@ def test_merge_includes_seeds_and_category_specific_exceptions(
     assert merge_hosts.main(["--category", "anime-manga", "--no-progress"]) == 0
     hosts = tmp_path / "hosts" / "anime-manga.txt"
     entries = set(utils.iter_domains(hosts))
-    assert entries == {"mangadex.org", "webtoons.com", "community.example"}
+    assert entries == {"mangadex.org", "webtoons.com", "community-fiction.org"}
     assert "GPL-3.0" in hosts.read_text(encoding="utf-8")
 
     definition = next(pack for pack in SITE_PACKS if pack.category == "anime-manga")
