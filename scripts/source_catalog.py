@@ -28,6 +28,11 @@ CATEGORY_DESCRIPTIONS: dict[str, str] = {
     "dating": "Dating and matchmaking websites",
     "shopping": "Online shopping and commerce websites",
     "anime-manga": "Anime, manga, manhwa, manhua, webtoons and related reading platforms",
+    "forums": "Discussion forums and Q&A communities",
+    "news": "News sites and online press",
+    "sports": "Sports news, results and communities",
+    "messaging": "Messaging and chat applications",
+    "ai-tools": "AI chatbots and generative AI services",
 }
 
 # Keep category sources deliberately focused. General ad/malware/tracker lists do
@@ -132,6 +137,12 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
     ),
     "social": (
         Source(
+            "hagezi-social",
+            "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/social-onlydomains.txt",
+            "GPL-3.0",
+            "https://github.com/hagezi/dns-blocklists",
+        ),
+        Source(
             "stevenblack-social",
             "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/social-only/hosts",
             "mixed upstream licenses; see StevenBlack/hosts",
@@ -170,6 +181,18 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
     ),
     "gambling": (
         Source(
+            "hagezi-gambling-mini",
+            "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/gambling.mini-onlydomains.txt",
+            "GPL-3.0",
+            "https://github.com/hagezi/dns-blocklists",
+        ),
+        Source(
+            "shadowwhisperer-gambling",
+            "https://raw.githubusercontent.com/ShadowWhisperer/BlockLists/master/Lists/Gambling",
+            "Unlicense",
+            "https://github.com/ShadowWhisperer/BlockLists",
+        ),
+        Source(
             "blocklistproject-gambling",
             "https://raw.githubusercontent.com/blocklistproject/Lists/master/gambling.txt",
             "Unlicense",
@@ -204,6 +227,12 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
     ),
     "dating": (
         Source(
+            "shadowwhisperer-dating",
+            "https://raw.githubusercontent.com/ShadowWhisperer/BlockLists/master/Lists/Dating",
+            "Unlicense",
+            "https://github.com/ShadowWhisperer/BlockLists",
+        ),
+        Source(
             "ut1-dating",
             "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/dating/domains",
             "CC BY-SA 4.0",
@@ -230,6 +259,88 @@ CATEGORY_SOURCES: dict[str, tuple[Source, ...]] = {
             "https://raw.githubusercontent.com/newedgex/ani-manga-blocklist/main/refined-blacklist.txt",
             "GPL-3.0",
             "https://github.com/newedgex/ani-manga-blocklist",
+        ),
+    ),
+    "forums": (
+        Source(
+            "ut1-forums",
+            "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/forums/domains",
+            "CC BY-SA 4.0",
+            "https://dsi.ut-capitole.fr/blacklists/",
+        ),
+    ),
+    "news": (
+        Source(
+            "ut1-press",
+            "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/press/domains",
+            "CC BY-SA 4.0",
+            "https://dsi.ut-capitole.fr/blacklists/",
+        ),
+    ),
+    "sports": (
+        Source(
+            "ut1-sports",
+            "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/sports/domains",
+            "CC BY-SA 4.0",
+            "https://dsi.ut-capitole.fr/blacklists/",
+        ),
+    ),
+    "messaging": (
+        Source(
+            "ut1-chat",
+            "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/chat/domains",
+            "CC BY-SA 4.0",
+            "https://dsi.ut-capitole.fr/blacklists/",
+        ),
+        Source(
+            "nickoppen-discord",
+            "https://raw.githubusercontent.com/nickoppen/pihole-blocklists/master/blocklist-discord.txt",
+            "see upstream",
+            "https://github.com/nickoppen/pihole-blocklists",
+        ),
+        Source(
+            "nickoppen-messenger",
+            "https://raw.githubusercontent.com/nickoppen/pihole-blocklists/master/blocklist-messenger.txt",
+            "see upstream",
+            "https://github.com/nickoppen/pihole-blocklists",
+        ),
+        Source(
+            "nickoppen-signal",
+            "https://raw.githubusercontent.com/nickoppen/pihole-blocklists/master/blocklist-signal.txt",
+            "see upstream",
+            "https://github.com/nickoppen/pihole-blocklists",
+        ),
+        Source(
+            "nickoppen-telegram",
+            "https://raw.githubusercontent.com/nickoppen/pihole-blocklists/master/blocklist-telegram.txt",
+            "see upstream",
+            "https://github.com/nickoppen/pihole-blocklists",
+        ),
+        Source(
+            "nickoppen-viber",
+            "https://raw.githubusercontent.com/nickoppen/pihole-blocklists/master/blocklist-viber.txt",
+            "see upstream",
+            "https://github.com/nickoppen/pihole-blocklists",
+        ),
+        Source(
+            "nickoppen-snapchat",
+            "https://raw.githubusercontent.com/nickoppen/pihole-blocklists/master/blocklist-snapchat.txt",
+            "see upstream",
+            "https://github.com/nickoppen/pihole-blocklists",
+        ),
+    ),
+    "ai-tools": (
+        Source(
+            "ut1-ai",
+            "https://raw.githubusercontent.com/olbat/ut1-blacklists/master/blacklists/ai/domains",
+            "CC BY-SA 4.0",
+            "https://dsi.ut-capitole.fr/blacklists/",
+        ),
+        Source(
+            "shadowwhisperer-ai",
+            "https://raw.githubusercontent.com/ShadowWhisperer/BlockLists/master/Lists/AI",
+            "Unlicense",
+            "https://github.com/ShadowWhisperer/BlockLists",
         ),
     ),
 }

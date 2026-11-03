@@ -71,7 +71,8 @@ def test_default_sources_all_look_like_urls():
 def test_catalog_contains_product_categories():
     categories = set(source_catalog.category_names())
     assert {"adult", "adult-extended", "gaming", "social", "gambling"} <= categories
-    assert {"streaming", "dating", "shopping"} <= categories
+    assert {"streaming", "dating", "shopping", "anime-manga"} <= categories
+    assert {"forums", "news", "sports", "messaging", "ai-tools"} <= categories
     assert source_catalog.sources_for_category("adult") == {
         "stevenblack-porn": "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts",
         "hagezi-nsfw": "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/nsfw-onlydomains.txt",

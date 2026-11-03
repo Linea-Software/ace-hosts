@@ -46,6 +46,12 @@ SITE_PACKS: tuple[SitePackDefinition, ...] = (
     SitePackDefinition("pack-streaming-pro", "Streaming Websites — Pro", "streaming"),
     SitePackDefinition("pack-shopping-pro", "Shopping Websites — Pro", "shopping"),
     SitePackDefinition("pack-anime-manga-pro", "Anime & Manga Websites — Pro", "anime-manga"),
+    SitePackDefinition("pack-forums-pro", "Forums & Communities — Pro", "forums"),
+    SitePackDefinition("pack-news-pro", "News Websites — Pro", "news"),
+    SitePackDefinition("pack-sports-pro", "Sports Websites — Pro", "sports"),
+    SitePackDefinition("pack-messaging-pro", "Messaging Websites — Pro", "messaging"),
+    SitePackDefinition("pack-ai-tools-pro", "AI Tools Websites — Pro", "ai-tools"),
+    SitePackDefinition("pack-dating-pro", "Dating Websites — Pro", "dating"),
 )
 
 _SCHEMA_SQL = """

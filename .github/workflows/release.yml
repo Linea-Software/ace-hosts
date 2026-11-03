@@ -67,7 +67,12 @@ jobs:
             "streaming:hosts/streaming.txt" \
             "dating:hosts/dating.txt" \
             "shopping:hosts/shopping.txt" \
-            "anime-manga:hosts/anime-manga.txt"; do
+            "anime-manga:hosts/anime-manga.txt" \
+            "forums:hosts/forums.txt" \
+            "news:hosts/news.txt" \
+            "sports:hosts/sports.txt" \
+            "messaging:hosts/messaging.txt" \
+            "ai-tools:hosts/ai-tools.txt"; do
             category="${entry%%:*}"
             file="${entry#*:}"
             count=$(grep -m1 '^# Entries:' "$file" | awk '{print $3}')

@@ -22,6 +22,11 @@ but now builds independent lists for:
 - **dating** — dating and matchmaking sites
 - **shopping** — online shopping and commerce sites
 - **anime-manga** — anime, manga, manhwa, manhua, webtoons and related novels
+- **forums** — discussion forums and community websites
+- **news** — news and online press
+- **sports** — sports portals and scores
+- **messaging** — messaging apps and chat platforms
+- **ai-tools** — AI chatbots and generative AI services
 
 The categories stay separate end-to-end: sources download into
 `downloads/<category>/`, each merge consumes only that category's successful
@@ -34,7 +39,7 @@ produce one SQLite backup ZIP such as `site-pack-adult-free.zip` or
 
 ## Features
 
-- **Nine behavioural categories** with a central source catalog in
+- **Fourteen behavioural categories** with a central source catalog in
   `scripts/source_catalog.py`.
 - **Format-tolerant parsing** for classic hosts files, bare domains, Adblock
   syntax (`||domain^`), wildcards, URLs, inline comments, BOMs and CRLF.
@@ -109,6 +114,11 @@ hosts/
 ├── dating.txt
 ├── shopping.txt
 ├── anime-manga.txt
+├── forums.txt
+├── news.txt
+├── sports.txt
+├── messaging.txt
+├── ai-tools.txt
 ├── site-pack-adult-free.zip
 ├── site-pack-adult-pro.zip
 ├── site-pack-gaming-free.zip
@@ -117,6 +127,12 @@ hosts/
 ├── site-pack-streaming-pro.zip
 ├── site-pack-shopping-pro.zip
 ├── site-pack-anime-manga-pro.zip
+├── site-pack-forums-pro.zip
+├── site-pack-news-pro.zip
+├── site-pack-sports-pro.zip
+├── site-pack-messaging-pro.zip
+├── site-pack-ai-tools-pro.zip
+├── site-pack-dating-pro.zip
 └── sha256_checksums.txt   # release workflow
 ```
 
@@ -205,12 +221,17 @@ mixed into these categories.
 | adult | StevenBlack `porn-only`; HaGeZi NSFW |
 | adult-extended | StevenBlack `porn-only`; Block List Project porn; 4skinSkywalker Anti-Porn; tiuxo porn; saskuu porno; StbanMc CommunityBlocklists porn; zangadoprojets Pornpages; HaGeZi NSFW; Sinfonietta pornography; chadmayfield porn; Energized Porn |
 | gaming | UT1 `games`; Block List Project Fortnite |
-| social | StevenBlack `social-only`; UT1 `social_networks`; Block List Project Facebook, TikTok, Twitter/X and WhatsApp |
-| gambling | Block List Project gambling; StevenBlack `gambling-only`; UT1 `gambling` |
+| social | HaGeZi Social Networks; StevenBlack `social-only`; UT1 `social_networks`; Block List Project Facebook, TikTok, Twitter/X and WhatsApp |
+| gambling | HaGeZi Gambling Mini; ShadowWhisperer Gambling; Block List Project gambling; StevenBlack `gambling-only`; UT1 `gambling` |
 | streaming | UT1 `audio-video`; Block List Project YouTube |
-| dating | UT1 `dating` |
+| dating | UT1 `dating`; ShadowWhisperer Dating |
 | shopping | UT1 `shopping` |
 | anime-manga | UT1 `manga`; newedgex `ani-manga-blocklist` refined list; curated ACE seeds for official manga, Korean manhwa/webtoons, Chinese manhua and web novels |
+| forums | UT1 `forums` |
+| news | UT1 `press` |
+| sports | UT1 `sports` |
+| messaging | UT1 `chat`; nickoppen Discord, Messenger, Signal, Telegram, Viber and Snapchat |
+| ai-tools | UT1 `ai`; ShadowWhisperer AI |
 
 Exact raw URLs, source homepages and license labels live in
 [`scripts/source_catalog.py`](scripts/source_catalog.py), making source changes
@@ -232,6 +253,7 @@ but fails if no selected source succeeds.
   plus HaGeZi's NSFW-only domains back the default/free Ace adult site pack.
 - The `adult-extended` category retains the previous multi-source adult catalog
   for the extended/Pro site pack.
+- **Social, gambling and dating** incorporate the focused HaGeZi and ShadowWhisperer sources. Messaging combines the UT1 chat directory with app-specific nickoppen Pi-hole lists. Always review category and platform false positives.
 - **Anime/manga/manhwa/manhua** combines UT1 manga and the GPL-3.0 `newedgex/ani-manga-blocklist` refined domain list with `seeds/anime-manga.txt` (first-party curated platform hosts). The larger community list may include unrelated sites: maintain `exceptions/anime-manga.txt` and audit false positives before each release.
 
 ## Licensing of generated data
