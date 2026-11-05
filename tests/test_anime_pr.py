@@ -100,16 +100,16 @@ def test_pr_proposal_filters_and_is_idempotent(tmp_path: Path):
         }
 
     rows = [
-        record("confirmed.org", 2, "validated-extended"),
+        record("confirmed.org", 2, "validated-candidate"),
         record("scraped.org", 1, "review", joined=True, scraped=True),
         {**record("sitemap-reader.org", 1, "review", joined=True),
          "evidence": ["site-sitemap:sitemap-paths"], "categories": ["manga"], "languages": ["ja"]},
         record("one-catalog.org", 1, "review", joined=True),
         record("outbound-only.org", 0, "review", joined=True, scraped=True),
-        record("already.org", 2, "validated-extended"),
+        record("already.org", 2, "validated-candidate"),
         record("pro.org", 2, "pro"),
         record("github.com", 2, "excluded"),
-        record("blocked.org", 2, "validated-extended"),
+        record("blocked.org", 2, "validated-candidate"),
     ]
     ledger.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
     approved = tmp_path / "approved.txt"
@@ -150,33 +150,24 @@ def test_unmerged_discovery_report_cannot_enter_release(tmp_path: Path, monkeypa
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "hosts"))
     monkeypatch.setenv("EXCEPTIONS_DIR", str(tmp_path / "exceptions"))
     monkeypatch.setenv("WHITELIST_FILE", str(tmp_path / "whitelist.txt"))
-    host_dir = tmp_path / "hosts"
-    host_dir.mkdir()
-    (host_dir / "anime-manga.txt").write_text("127.0.0.1 pro.org\n", encoding="utf-8")
-    download = tmp_path / "downloads" / "anime-manga-extended"
+    download = tmp_path / "downloads" / "anime-manga"
     download.mkdir(parents=True)
-    (download / "newedgex-joined.txt").write_text(
-        "".join(f"source{i}.org\n" for i in range(discovery.MIN_JOINED_DOMAINS)),
-        encoding="utf-8",
-    )
+    (download / "refined.txt").write_text("source.org\n", encoding="utf-8")
+    (download / "newedgex-joined.txt").write_text("unapproved.org\n", encoding="utf-8")
     (download / source_catalog.DOWNLOAD_MANIFEST).write_text(
-        "newedgex-joined.txt\n", encoding="utf-8",
+        "refined.txt\nnewedgex-joined.txt\n", encoding="utf-8",
     )
     report = tmp_path / "downloads" / "anime-discovery"
     report.mkdir()
-    (report / "eligible-extended.txt").write_text(
-        "unapproved.org\n", encoding="utf-8",
-    )
+    (report / "eligible-anime.txt").write_text("unapproved.org\n", encoding="utf-8")
     seeds = tmp_path / "seeds"
     seeds.mkdir()
-    (seeds / "anime-manga-extended.txt").write_text(
-        "# Only merged PR approvals belong here\n", encoding="utf-8",
-    )
-    assert merge_hosts.main(["--category", "anime-manga-extended", "--no-progress"]) == 0
-    assert set(utils.iter_domains(host_dir / "anime-manga-extended.txt")) == {"pro.org"}
+    seed = seeds / "anime-manga.txt"
+    seed.write_text("pro.org\n", encoding="utf-8")
+    assert merge_hosts.main(["--category", "anime-manga", "--no-progress"]) == 0
+    hosts = tmp_path / "hosts" / "anime-manga.txt"
+    assert set(utils.iter_domains(hosts)) == {"source.org", "pro.org"}
 
-    (seeds / "anime-manga-extended.txt").write_text("approved.org\n", encoding="utf-8")
-    assert merge_hosts.main(["--category", "anime-manga-extended", "--no-progress"]) == 0
-    assert set(utils.iter_domains(host_dir / "anime-manga-extended.txt")) == {
-        "pro.org", "approved.org",
-    }
+    seed.write_text("pro.org\napproved.org\n", encoding="utf-8")
+    assert merge_hosts.main(["--category", "anime-manga", "--no-progress"]) == 0
+    assert set(utils.iter_domains(hosts)) == {"source.org", "pro.org", "approved.org"}

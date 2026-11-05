@@ -43,11 +43,10 @@ jobs:
           key: ${{ runner.os }}-anime-crawl-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-anime-crawl-
-      - name: Fetch curated and joined sources
+      - name: Fetch curated and discovery-only sources
         run: |
           uv run python scripts/download_sources.py --category anime-manga --no-rate-limit
-          uv run python scripts/download_sources.py --category anime-manga-extended --no-rate-limit
-      - name: Build existing curated Pro baseline
+      - name: Build existing anime/manga baseline
         run: uv run python scripts/merge_hosts.py --category anime-manga --no-progress
       - name: Discover public web and verify candidates
         env:
@@ -62,9 +61,9 @@ jobs:
             --crawl-depth "$CRAWL_DEPTH"
       - name: Propose new sites for human review
         run: uv run python scripts/propose_anime_sites.py
-      - name: Validate the proposed Extended list and tests
+      - name: Validate the proposed anime/manga list and tests
         run: |
-          uv run python scripts/merge_hosts.py --category anime-manga-extended --no-progress
+          uv run python scripts/merge_hosts.py --category anime-manga --no-progress
           uv run pytest -q
           uv run basedpyright
       - name: Publish complete review artifacts
@@ -75,7 +74,7 @@ jobs:
           path: |
             downloads/anime-discovery/candidates.jsonl
             downloads/anime-discovery/summary.json
-            downloads/anime-discovery/eligible-extended.txt
+            downloads/anime-discovery/eligible-anime.txt
             downloads/anime-discovery/pr-body.md
             downloads/anime-discovery/crawl-report.json
             downloads/anime-discovery/crawl-report.md
@@ -103,7 +102,7 @@ jobs:
           branch: automation/anime-discovery
           base: main
           delete-branch: true
-          add-paths: seeds/anime-manga-extended.txt
+          add-paths: seeds/anime-manga.txt
           commit-message: "chore: propose anime sites for review"
           title: "Anime Discovery: new sites for review"
           body-path: downloads/anime-discovery/pr-body.md

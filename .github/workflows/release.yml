@@ -33,11 +33,7 @@ jobs:
       - name: Clean output
         run: rm -f hosts/*
 
-      - name: Build curated Anime/Manga Pro first
-        run: uv run python scripts/merge_hosts.py --category anime-manga --no-progress
-
-      # Extended is built solely from seeds/anime-manga-extended.txt merged via an
-      # approved PR. Live discovery findings never enter an unreviewed release.
+      # Only merged, reviewed anime/manga seeds are published; discovery is never auto-promoted.
       - name: Merge categories
         run: uv run python scripts/merge_hosts.py --all-categories --no-progress
 
@@ -76,7 +72,6 @@ jobs:
             "dating:hosts/dating.txt" \
             "shopping:hosts/shopping.txt" \
             "anime-manga:hosts/anime-manga.txt" \
-            "anime-manga-extended:hosts/anime-manga-extended.txt" \
             "forums:hosts/forums.txt" \
             "news:hosts/news.txt" \
             "sports:hosts/sports.txt" \

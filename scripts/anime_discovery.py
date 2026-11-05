@@ -677,7 +677,7 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
         # allow it to override the global whitelist or shared-host safeguards.
         rejected = host in excluded or not safe_hostname(host)
         status = ("excluded" if rejected else "pro" if host in pro else
-                  "validated-extended" if trusted else
+                  "validated-candidate" if trusted else
                   "website-verified" if website_verified else "review")
         if trusted and not rejected:
             approved.add(host)
@@ -725,10 +725,10 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
             "decision_reason": ("excluded by maintainer policy or infrastructure rule"
                                 if rejected else "merged maintainer-approved seed"),
             "extension_ids": [],
-            "evidence": ["seeds/anime-manga-extended.txt"], "licenses": [],
+            "evidence": ["seeds/anime-manga.txt"], "licenses": [],
             "independent_families": 0, "joined": host in joined,
             "confidence": 0 if rejected else 95,
-            "status": "excluded" if rejected else "validated-extended",
+            "status": "excluded" if rejected else "validated-candidate",
         })
     ledger.sort(key=lambda entry: str(entry["hostname"]))
     return ledger, approved
@@ -752,7 +752,7 @@ def build_discovery(records: list[Evidence], *, joined_file: Path, pro_file: Pat
     excluded = _load_hostnames(whitelist_file) | _load_hostnames(exceptions_file)
     ledger, eligible = classify(records, joined, pro, allowed, excluded)
     counts = {state: sum(entry["status"] == state for entry in ledger)
-              for state in ("pro", "validated-extended", "website-verified", "review", "excluded")}
+              for state in ("pro", "validated-candidate", "website-verified", "review", "excluded")}
     # A broken or hostile upstream cannot silently trigger an enormous jump.
     additional = eligible - pro
     if len(additional) > max(3000, len(pro) // 2):
@@ -761,7 +761,7 @@ def build_discovery(records: list[Evidence], *, joined_file: Path, pro_file: Pat
     utils.atomic_write_lines(output_dir / "candidates.jsonl",
                              (json.dumps({"detected_at": checked_at, **row},
                                          ensure_ascii=False, sort_keys=True) for row in ledger))
-    utils.atomic_write_lines(output_dir / "eligible-extended.txt", sorted(eligible))
+    utils.atomic_write_lines(output_dir / "eligible-anime.txt", sorted(eligible))
     summary = {"catalog_candidates": len(ledger), "candidate_domains": len(ledger),
                "joined_input": len(joined),
                "joined_not_promoted": len(joined - pro - eligible),
@@ -893,7 +893,7 @@ class DiscoveryArgs(argparse.Namespace):
     crawl_query_templates: Path | None = None
     crawl_directory_url: list[str] | None = None
     crawl_public_indexes: bool = True
-    approved_file: Path = utils.PROJECT_ROOT / "seeds" / "anime-manga-extended.txt"
+    approved_file: Path = utils.PROJECT_ROOT / "seeds" / "anime-manga.txt"
     whitelist: Path = utils.PROJECT_ROOT / "whitelist.txt"
     exceptions: Path = utils.PROJECT_ROOT / "exceptions" / "anime-manga.txt"
     timeout: float = 12
@@ -976,7 +976,7 @@ def main(argv: list[str] | None = None) -> int:
             except (OSError, ValueError, requests.RequestException) as error:
                 logger.warning("directory %s skipped: %s", url, error)
         if args.scrape_sites:
-            joined = _load_hostnames(args.downloads_dir / "anime-manga-extended" / "newedgex-joined.txt")
+            joined = _load_hostnames(args.downloads_dir / "anime-manga" / "newedgex-joined.txt")
             pro = _load_hostnames(args.hosts_dir / "anime-manga.txt")
             approved = _load_hostnames(args.approved_file)
             records.extend(scrape_catalog_sites(
@@ -1028,7 +1028,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         summary = build_discovery(
-            records, joined_file=args.downloads_dir / "anime-manga-extended" / "newedgex-joined.txt",
+            records, joined_file=args.downloads_dir / "anime-manga" / "newedgex-joined.txt",
             pro_file=args.hosts_dir / "anime-manga.txt",
             approved_file=args.approved_file, whitelist_file=args.whitelist,
             exceptions_file=args.exceptions, output_dir=args.output_dir,

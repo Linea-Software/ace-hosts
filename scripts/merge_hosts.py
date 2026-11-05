@@ -134,36 +134,6 @@ def merge_files(
     return ordered, stats
 
 
-def _extended_domains(
-    files: list[Path],
-    config: dict[str, str],
-    excluded: set[str],
-) -> tuple[list[str], dict[str, int]]:
-    """Publish Pro plus approved PR-merged seeds, never raw discovery findings."""
-    from scripts.anime_discovery import MIN_JOINED_DOMAINS, safe_hostname
-
-    pro_path = default_output_path("anime-manga", config)
-    approvals_path = utils.PROJECT_ROOT / "seeds" / "anime-manga-extended.txt"
-    if not pro_path.is_file() or not approvals_path.is_file():
-        raise ValueError("Extended requires a fresh Pro merge and committed approvals")
-    pro = set(utils.iter_domains(pro_path))
-    approved = set(utils.iter_domains(approvals_path))
-    joined: set[str] = set()
-    # The reviewed seed is also in files; don't count it as an upstream download.
-    for path in files:
-        if path.resolve() != approvals_path.resolve():
-            joined.update(utils.iter_domains(path))
-    if not pro or len(joined) < MIN_JOINED_DOMAINS:
-        raise ValueError("Extended requires nonempty Pro and a complete joined download")
-    additional = approved - pro
-    if len(additional) > max(3000, len(pro) // 2):
-        raise ValueError("unexpected Extended growth requires manual review")
-    domains = sorted(host for host in pro | approved if host not in excluded and safe_hostname(host))
-    stats = {"files": len(files) + 1, "raw_domains": len(pro) + len(joined),
-             "whitelisted": len((pro | approved) - set(domains)), "unique": len(domains)}
-    return domains, stats
-
-
 def default_output_path(category: str, config: dict[str, str]) -> Path:
     """Return the default merged output for one category."""
     output_dir = _configured_dir(config["OUTPUT_DIR"])
@@ -202,6 +172,14 @@ def _merge_category(
         seeds = utils.PROJECT_ROOT / "seeds" / f"{category}.txt"
         if seeds.is_file():
             files.append(seeds)
+    if category == "anime-manga" and using_builtin_inputs:
+        # Joined is only a discovery signal; never import its raw domains.
+        discovery_only = {
+            f"{source.name}.txt"
+            for source in source_catalog.CATEGORY_SOURCES[category]
+            if source.discovery_only
+        }
+        files = [path for path in files if path.name not in discovery_only]
     if not files:
         logger.error(
             "%s: no input files found — run `ace-hosts-download --category %s` first",
@@ -213,17 +191,9 @@ def _merge_category(
     dedupe = not args.no_dedupe and utils.config_bool(config["REMOVE_DUPLICATES"])
     category_exceptions = load_category_exceptions(exceptions_dir, category)
     excluded_domains = whitelist_domains | category_exceptions
-    if category == "anime-manga-extended":
-        excluded_domains |= load_category_exceptions(exceptions_dir, "anime-manga")
-    if category == "anime-manga-extended" and using_builtin_inputs:
-        try:
-            domains, stats = _extended_domains(files, config, excluded_domains)
-        except ValueError as error:
-            logger.error("%s: %s", category, error)
-            return 1
-        files = [*files, default_output_path("anime-manga", config)]
-    else:
-        domains, stats = merge_files(files, excluded_domains, dedupe=dedupe, show_progress=not args.no_progress)
+    domains, stats = merge_files(
+        files, excluded_domains, dedupe=dedupe, show_progress=not args.no_progress
+    )
     if category == "anime-manga" and using_builtin_inputs:
         from scripts.anime_discovery import safe_hostname
         before = len(domains)

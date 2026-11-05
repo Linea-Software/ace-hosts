@@ -1,6 +1,6 @@
-"""Turn discovery findings into a maintainer-reviewable Extended seed PR.
+"""Turn discovery findings into a maintainer-reviewable anime/manga seed PR.
 
-Only a merged seed entry can affect the release. Catalog corroboration or
+Only a merged seed entry can affect the published anime/manga list. Catalog corroboration or
 bounded homepage scraping makes a domain eligible for *proposal*, never for
 unreviewed publication.
 """
@@ -53,7 +53,7 @@ def propose_sites(
                 continue
             if host in pro or host in existing or host in excluded:
                 continue
-            if row.get("status") not in {"validated-extended", "website-verified", "review"}:
+            if row.get("status") not in {"validated-candidate", "website-verified", "review"}:
                 continue
             families = row.get("independent_families")
             if not isinstance(families, int) or isinstance(families, bool):
@@ -96,7 +96,7 @@ def propose_sites(
         "## New anime and manga sites for review",
         "",
         f"**{len(names)} new {'domain' if len(names) == 1 else 'domains'} proposed**. When you review and merge this PR into `main`,",
-        "the next release will automatically add them to **Anime/Manga Extended**.",
+        "the next release will automatically add them to **Anime/Manga Pro**.",
         "Published lists remain unchanged until this PR is merged.",
         "",
         "Discovery combines independent catalogs, multilingual public-web search,",
@@ -139,7 +139,7 @@ def propose_sites(
         "",
         "**Before merging:** verify that each domain is a relevant thematic site, not a",
         "general-purpose service, an unwanted mirror, or a false positive. Remove lines",
-        "from `seeds/anime-manga-extended.txt` directly in the PR.",
+        "from `seeds/anime-manga.txt` directly in the PR.",
         "The whitelist and category exclusions still take precedence.",
         "",
         "Raw discovery evidence and candidates not proposed are in the artifacts",
@@ -151,7 +151,7 @@ def propose_sites(
 
 class ProposalArgs(argparse.Namespace):
     ledger: Path = utils.PROJECT_ROOT / "downloads" / "anime-discovery" / "candidates.jsonl"
-    approved_file: Path = utils.PROJECT_ROOT / "seeds" / "anime-manga-extended.txt"
+    approved_file: Path = utils.PROJECT_ROOT / "seeds" / "anime-manga.txt"
     pro_file: Path = utils.PROJECT_ROOT / "hosts" / "anime-manga.txt"
     whitelist: Path = utils.PROJECT_ROOT / "whitelist.txt"
     exceptions: Path = utils.PROJECT_ROOT / "exceptions" / "anime-manga.txt"

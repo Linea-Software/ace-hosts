@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import source_catalog, utils
+from scripts import source_catalog, utils, validate_category_outputs
 from scripts.validate_category_outputs import validate_category, validate_all_categories
 
 
@@ -77,6 +77,18 @@ def test_rejects_missing_license_and_wrong_counts(tmp_path: Path):
 def test_all_category_validation_covers_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     hosts, downloads, exceptions, whitelist = _fixture(tmp_path)
     monkeypatch.setattr(source_catalog, "category_names", lambda: ("anime-manga",))
+    monkeypatch.setattr(validate_category_outputs, "MIN_ANIME_RELEASE_DOMAINS", 2)
+    monkeypatch.setattr(utils, "PROJECT_ROOT", tmp_path)
+    (hosts / "anime-manga.txt").write_text(
+        (hosts / "anime-manga.txt").read_text().replace(".example", ".org"),
+        encoding="utf-8",
+    )
+    (downloads / "anime-manga" / "list.txt").write_text(
+        "alpha.org\nbeta.org\n", encoding="utf-8"
+    )
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    (seeds / "anime-manga.txt").write_text("# reviewed\n", encoding="utf-8")
     results = validate_all_categories(hosts, downloads, exceptions, whitelist)
     assert results["anime-manga"] == (2, 1)
 

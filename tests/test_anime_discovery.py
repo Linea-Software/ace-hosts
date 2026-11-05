@@ -105,11 +105,11 @@ def test_cross_ecosystem_quorum_and_single_source_review():
         {"legacy.org"}, {"manual-manga.org"}, {"reddit.com"}
     )
     statuses = {entry["hostname"]: entry["status"] for entry in ledger}
-    assert statuses["mangasite.org"] == "validated-extended"
+    assert statuses["mangasite.org"] == "validated-candidate"
     assert statuses["single.org"] == "review"
     assert statuses["github.com"] == "excluded"
     assert statuses["reddit.com"] == "excluded"
-    assert statuses["manual-manga.org"] == "validated-extended"
+    assert statuses["manual-manga.org"] == "validated-candidate"
     assert eligible == {"mangasite.org", "manual-manga.org"}
 
 
@@ -136,7 +136,7 @@ def test_joined_without_review_is_never_published(tmp_path: Path):
         output_dir=output, checked_at="2026-11-03"
     )
     assert summary["new_eligible"] == 1
-    assert list(utils.iter_domains(output / "eligible-extended.txt")) == ["confirmed.org"]
+    assert list(utils.iter_domains(output / "eligible-anime.txt")) == ["confirmed.org"]
     record = cast(object, json.loads((output / "candidates.jsonl").read_text()))
     assert isinstance(record, dict)
     assert record["repositories"] == ["aidoku", "mangayomi"]
@@ -153,35 +153,34 @@ def test_failed_refresh_does_not_publish_partial_cache(tmp_path: Path, monkeypat
     assert not (tmp_path / "mock.json").exists()
 
 
-def test_end_to_end_extended_merge_and_pack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_end_to_end_reviewed_anime_merge_and_pack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(utils, "PROJECT_ROOT", tmp_path)
     monkeypatch.setenv("DOWNLOAD_DIR", str(tmp_path / "downloads"))
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "hosts"))
     monkeypatch.setenv("EXCEPTIONS_DIR", str(tmp_path / "exceptions"))
     monkeypatch.setenv("WHITELIST_FILE", str(tmp_path / "whitelist.txt"))
-    (tmp_path / "hosts").mkdir()
-    (tmp_path / "hosts" / "anime-manga.txt").write_text(
-        "127.0.0.1 mangadex.org\n127.0.0.1 webtoons.com\n", encoding="utf-8")
-    raw = tmp_path / "downloads" / "anime-manga-extended"
+    raw = tmp_path / "downloads" / "anime-manga"
     raw.mkdir(parents=True)
+    (raw / "refined.txt").write_text(
+        "mangadex.org\nwebtoons.com\n", encoding="utf-8")
     (raw / "newedgex-joined.txt").write_text(
         "".join(f"joined{i}.org\n" for i in range(discovery.MIN_JOINED_DOMAINS)) +
         "reddit.com\nfacebook.com\nconfirmed.org\nunreviewed.org\n", encoding="utf-8")
     (raw / source_catalog.DOWNLOAD_MANIFEST).write_text(
-        "newedgex-joined.txt\n", encoding="utf-8")
+        "refined.txt\nnewedgex-joined.txt\n", encoding="utf-8")
     discovery_dir = tmp_path / "downloads" / "anime-discovery"
     discovery_dir.mkdir()
-    (discovery_dir / "eligible-extended.txt").write_text(
+    (discovery_dir / "eligible-anime.txt").write_text(
         "confirmed.org\nfacebook.com\nunreviewed.org\n", encoding="utf-8")
     approvals_dir = tmp_path / "seeds"
     approvals_dir.mkdir()
-    (approvals_dir / "anime-manga-extended.txt").write_text(
+    (approvals_dir / "anime-manga.txt").write_text(
         "confirmed.org\nfacebook.com\n", encoding="utf-8")
-    assert merge_hosts.main(["--category", "anime-manga-extended", "--no-progress"]) == 0
-    generated = tmp_path / "hosts" / "anime-manga-extended.txt"
+    assert merge_hosts.main(["--category", "anime-manga", "--no-progress"]) == 0
+    generated = tmp_path / "hosts" / "anime-manga.txt"
     assert set(utils.iter_domains(generated)) == {
         "mangadex.org", "webtoons.com", "confirmed.org"}
-    definition = next(p for p in SITE_PACKS if p.pack_id == "pack-anime-manga-extended")
+    definition = next(p for p in SITE_PACKS if p.pack_id == "pack-anime-manga-pro")
     archive = build_site_pack(definition, tmp_path / "hosts", tmp_path / "packs")
     with zipfile.ZipFile(archive) as zip_file:
         assert zip_file.namelist() == ["pack.db"]
@@ -189,19 +188,19 @@ def test_end_to_end_extended_merge_and_pack(tmp_path: Path, monkeypatch: pytest.
     with sqlite3.connect(tmp_path / "pack" / "pack.db") as connection:
         assert connection.execute("SELECT entry_count FROM pack_meta").fetchone() == (3,)
         assert connection.execute("SELECT id FROM pack_meta").fetchone() == (
-            "pack-anime-manga-extended",)
+            "pack-anime-manga-pro",)
 
 
-def test_extended_never_falls_back_to_raw_joined(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_anime_never_falls_back_to_raw_joined(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(utils, "PROJECT_ROOT", tmp_path)
     monkeypatch.setenv("DOWNLOAD_DIR", str(tmp_path / "downloads"))
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "hosts"))
-    raw = tmp_path / "downloads" / "anime-manga-extended"
+    raw = tmp_path / "downloads" / "anime-manga"
     raw.mkdir(parents=True)
     (raw / "newedgex-joined.txt").write_text("facebook.com\n", encoding="utf-8")
     (raw / source_catalog.DOWNLOAD_MANIFEST).write_text("newedgex-joined.txt\n", encoding="utf-8")
-    assert merge_hosts.main(["--category", "anime-manga-extended", "--no-progress"]) == 1
-    assert not (tmp_path / "hosts" / "anime-manga-extended.txt").exists()
+    assert merge_hosts.main(["--category", "anime-manga", "--no-progress"]) == 1
+    assert not (tmp_path / "hosts" / "anime-manga.txt").exists()
 
 def test_maintainer_approval_without_catalog_record_and_exclusions():
     ledger, eligible = discovery.classify(
@@ -212,7 +211,7 @@ def test_maintainer_approval_without_catalog_record_and_exclusions():
     statuses = {entry["hostname"]: entry["status"] for entry in ledger}
     assert statuses == {
         "github.com": "excluded",
-        "reviewed-manga.org": "validated-extended",
+        "reviewed-manga.org": "validated-candidate",
     }
 
 

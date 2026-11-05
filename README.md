@@ -21,8 +21,7 @@ but now builds independent lists for:
 - **streaming** — video/audio streaming and entertainment services
 - **dating** — dating and matchmaking sites
 - **shopping** — online shopping and commerce sites
-- **anime-manga** — anime, manga, manhwa, manhua, webtoons and related novels (curated Pro)
-- **anime-manga-extended** — optional Extended list with proposed sites approved through an Anime Discovery pull request
+- **anime-manga** — anime, manga, manhwa, manhua, webtoons and related novels (Pro, including reviewed discoveries)
 - **forums** — discussion forums and community websites
 - **news** — news and online press
 - **sports** — sports portals and scores
@@ -40,7 +39,7 @@ produce one SQLite backup ZIP such as `site-pack-adult-free.zip` or
 
 ## Features
 
-- **Fifteen behavioural categories** with a central source catalog in
+- **Fourteen behavioural categories** with a central source catalog in
   `scripts/source_catalog.py`.
 - **Format-tolerant parsing** for classic hosts files, bare domains, Adblock
   syntax (`||domain^`), wildcards, URLs, inline comments, BOMs and CRLF.
@@ -117,7 +116,6 @@ hosts/
 ├── dating.txt
 ├── shopping.txt
 ├── anime-manga.txt
-├── anime-manga-extended.txt
 ├── forums.txt
 ├── news.txt
 ├── sports.txt
@@ -131,7 +129,6 @@ hosts/
 ├── site-pack-streaming-pro.zip
 ├── site-pack-shopping-pro.zip
 ├── site-pack-anime-manga-pro.zip
-├── site-pack-anime-manga-extended.zip
 ├── site-pack-forums-pro.zip
 ├── site-pack-news-pro.zip
 ├── site-pack-sports-pro.zip
@@ -215,7 +212,7 @@ Validates the generated release directory and exits with an error when any file
 is larger than 2 GiB. The release workflow runs this check before checksums and
 publication.
 
-**Anime Discovery → PR → Release:** run [Anime Discovery](https://github.com/Linea-Software/ace-hosts/actions/workflows/anime-discovery.yml) manually (or let it run weekly). It reads extension catalogs, **scrapes public anime/manga website homepages** (including JavaScript pages via bounded Playwright Chromium fallback and same-origin sitemaps) where allowed, and opens/updates a PR listing new candidate hosts. Review the domains and merge the PR; the next [Release](https://github.com/Linea-Software/ace-hosts/actions/workflows/release.yml) includes exactly these newly approved hosts in Anime/Manga Extended. Unmerged discoveries never reach published lists; no PR is opened if there are no new eligible proposals. Repository Actions must allow bot-created PRs (or set `ANIME_DISCOVERY_PR_TOKEN`).
+**Anime Discovery → PR → Release:** run [Anime Discovery](https://github.com/Linea-Software/ace-hosts/actions/workflows/anime-discovery.yml) manually (or let it run weekly). It reads extension catalogs, **scrapes public anime/manga website homepages** (including JavaScript pages via bounded Playwright Chromium fallback and same-origin sitemaps) where allowed, and opens/updates a PR listing new candidate hosts. Review the domains and merge the PR; the next [Release](https://github.com/Linea-Software/ace-hosts/actions/workflows/release.yml) includes the newly approved hosts in the primary Anime/Manga Pro list. Unmerged discoveries never reach published lists; no PR is opened if there are no new eligible proposals. Repository Actions must allow bot-created PRs (or set `ANIME_DISCOVERY_PR_TOKEN`).
 
 For source evidence, conservative filtering, scraping safeguards, licenses and manual approval, see [Anime/Manga discovery documentation](docs/anime-manga-discovery.md).
 
@@ -235,8 +232,7 @@ mixed into these categories.
 | streaming | UT1 `audio-video`; Block List Project YouTube; AdGuard `streaming` services |
 | dating | UT1 `dating`; ShadowWhisperer Dating; AdGuard `dating` services |
 | shopping | UT1 `shopping`; AdGuard `shopping` services |
-| anime-manga | UT1 manga; newedgex refined; manually curated ACE seeds (Pro) |
-| anime-manga-extended | newedgex joined **only as a candidate source**; Pro plus approved domains merged into `seeds/anime-manga-extended.txt` through discovery PR; never a raw 103k-host import |
+| anime-manga | UT1 manga; newedgex refined; first-party and Anime Discovery PR-reviewed hosts in `seeds/anime-manga.txt`; newedgex joined for discovery evidence **only**, never merged raw |
 | forums | UT1 `forums` |
 | news | UT1 `press` |
 | sports | UT1 `sports` |
@@ -265,7 +261,7 @@ but fails if no selected source succeeds.
   for the extended/Pro site pack.
 - **AdGuard service catalog:** the eight applicable built-in categories also normalize the public `services.json` registry by AdGuard service group. The JSON is never merged raw: the downloader converts only exact hostname DNS rules to domains, discards unsupported filter syntax and known shared infrastructure, and rejects empty or malformed registry output. The normal success manifest prevents stale files from being reused. AdGuard's source is GPL-3.0; review the category-specific output before distribution.
 - **Social, gambling and dating** incorporate the focused HaGeZi and ShadowWhisperer sources. Messaging combines the UT1 chat directory with app-specific nickoppen Pi-hole lists. Always review category and platform false positives.
-- **Anime/manga/manhwa/manhua** combines UT1 manga and the GPL-3.0 `newedgex/ani-manga-blocklist` refined domain list with `seeds/anime-manga.txt` (first-party curated platform hosts). The larger community list may include unrelated sites: maintain `exceptions/anime-manga.txt` and audit false positives before each release.
+- **Anime/manga/manhwa/manhua** combines UT1 manga and the GPL-3.0 `newedgex/ani-manga-blocklist` refined domain list with `seeds/anime-manga.txt` (first-party curated platform hosts). The raw joined list is downloaded solely for discovery and never enters the public blocklist without a reviewed PR. The larger community list may include unrelated sites: maintain `exceptions/anime-manga.txt` and audit false positives before each release.
 
 ## Licensing of generated data
 

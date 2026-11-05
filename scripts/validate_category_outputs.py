@@ -10,6 +10,7 @@ from pathlib import Path
 from scripts import merge_hosts, source_catalog, utils
 
 logger = logging.getLogger("ace-hosts.validate-categories")
+MIN_ANIME_RELEASE_DOMAINS = 4000
 
 
 def validate_category(
@@ -39,8 +40,6 @@ def validate_category(
     if not path.is_file():
         raise ValueError(f"{category}: missing merged hosts output {path}")
     exclusions = global_whitelist | merge_hosts.load_category_exceptions(exceptions_dir, category)
-    if category == "anime-manga-extended":
-        exclusions |= merge_hosts.load_category_exceptions(exceptions_dir, "anime-manga")
     metadata: dict[str, str] = {}
     previous = ""
     count = 0
@@ -97,29 +96,36 @@ def validate_all_categories(
         )
         count, sources = results[category]
         logger.info("%s: %d domains from %d successful source(s)", category, count, sources)
-    if "anime-manga-extended" in results:
+    if "anime-manga" in results:
         from scripts.anime_discovery import safe_hostname
 
-        pro = set(utils.iter_domains(hosts_dir / "anime-manga.txt"))
-        extended = set(utils.iter_domains(hosts_dir / "anime-manga-extended.txt"))
-        if len(pro) < 4000 or len(extended) < len(pro):
+        merged = set(utils.iter_domains(hosts_dir / "anime-manga.txt"))
+        if len(merged) < MIN_ANIME_RELEASE_DOMAINS:
             raise ValueError("anime/manga output unexpectedly short")
-        if not pro <= extended:
-            raise ValueError("Extended must contain every Pro hostname")
-        if any(not safe_hostname(domain) for domain in extended):
-            raise ValueError("shared infrastructure or reserved domain in Extended")
-        if len(extended - pro) > max(3000, len(pro) // 2):
-            raise ValueError("anomalous Extended growth requires manual review")
-        approved_path = utils.PROJECT_ROOT / "seeds" / "anime-manga-extended.txt"
+        if any(not safe_hostname(host) for host in merged):
+            raise ValueError("shared infrastructure or reserved domain in anime/manga")
+        approved_path = utils.PROJECT_ROOT / "seeds" / "anime-manga.txt"
         if not approved_path.is_file():
-            raise ValueError("Extended requires committed, reviewable approvals")
-        approved = set(utils.iter_domains(approved_path))
+            raise ValueError("anime/manga requires committed, reviewable seeds")
         excluded = global_whitelist | merge_hosts.load_category_exceptions(
-            exceptions_dir, "anime-manga-extended"
-        ) | merge_hosts.load_category_exceptions(exceptions_dir, "anime-manga")
-        expected = pro | {host for host in approved if host not in excluded and safe_hostname(host)}
-        if extended != expected:
-            raise ValueError("Extended contains unapproved domains or misses approved seeds")
+            exceptions_dir, "anime-manga"
+        )
+        approved = {host for host in utils.iter_domains(approved_path)
+                    if host not in excluded and safe_hostname(host)}
+        if not approved <= merged:
+            raise ValueError("anime/manga output misses reviewed seeds")
+
+        # Raw discovery candidates must not leak into the published list.
+        manifest = downloads_dir / "anime-manga" / source_catalog.DOWNLOAD_MANIFEST
+        names = {name.strip() for name in manifest.read_text(encoding="utf-8").splitlines()}
+        discovery_only = {f"{source.name}.txt" for source in source_catalog.CATEGORY_SOURCES["anime-manga"]
+                          if source.discovery_only}
+        allowed = set(approved)
+        for name in names - discovery_only:
+            allowed.update(utils.iter_domains(downloads_dir / "anime-manga" / name))
+        allowed = {host for host in allowed if host not in excluded and safe_hostname(host)}
+        if merged != allowed:
+            raise ValueError("anime/manga contains unapproved or missing source domains")
     return results
 
 
