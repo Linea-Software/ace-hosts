@@ -48,3 +48,11 @@ www.novelupdates.com
 www.royalroad.com
 www.webtoons.com
 www.wenku8.net
+# Reviewed additions from the previous Extended discovery PR
+animationandmoresummit.com
+animeindia.live
+mangagachat.com
+prtimes.jp
+www.animationandmoresummit.com
+www.animationxpress.com
+www.kamisama.com.br
