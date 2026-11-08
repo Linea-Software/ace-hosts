@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -37,11 +38,15 @@ class SitePackDefinition:
         return f"site-pack-{self.pack_id.removeprefix('pack-')}.zip"
 
 
+STARTER_CATEGORIES = frozenset({"gambling-starter", "streaming-starter"})
+
 SITE_PACKS: tuple[SitePackDefinition, ...] = (
     SitePackDefinition("pack-adult-free", "Adult Websites — Free", "adult"),
     SitePackDefinition("pack-adult-pro", "Adult Websites — Pro", "adult-extended"),
     SitePackDefinition("pack-social-free", "Social Media Websites — Free", "social"),
     SitePackDefinition("pack-gaming-free", "Gaming Websites — Free", "gaming"),
+    SitePackDefinition("pack-gambling-free", "Gambling Websites — Free", "gambling-starter"),
+    SitePackDefinition("pack-streaming-free", "Streaming Websites — Free", "streaming-starter"),
     SitePackDefinition("pack-gambling-pro", "Gambling Websites — Pro", "gambling"),
     SitePackDefinition("pack-streaming-pro", "Streaming Websites — Pro", "streaming"),
     SitePackDefinition("pack-shopping-pro", "Shopping Websites — Pro", "shopping"),
@@ -168,6 +173,13 @@ def build_site_pack(
 ) -> Path:
     """Build one release ZIP containing a single Ace-compatible pack.db."""
     hosts_file = hosts_dir / f"{definition.category}.txt"
+    if definition.category in STARTER_CATEGORIES:
+        # These intentionally tiny Free presets are maintained in source control
+        # rather than scraped from the full Pro datasets. Emit the plaintext
+        # asset alongside the ZIP so both the app catalog and release agree.
+        source = PROJECT_ROOT / "starter" / f"{definition.category}.txt"
+        hosts_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, hosts_file)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / definition.asset_name
 

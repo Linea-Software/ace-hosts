@@ -115,3 +115,19 @@ def test_build_site_pack_is_one_unsplit_zip_with_pack_db(tmp_path: Path):
 
     assert count == 2
     assert pack_id == "pack-gaming-free"
+
+
+def test_curated_free_starter_packs_are_generated_from_tracked_domains(tmp_path: Path):
+    from scripts.build_site_packs import SITE_PACKS
+    for pack_id, category in [
+        ("pack-gambling-free", "gambling-starter"),
+        ("pack-streaming-free", "streaming-starter"),
+    ]:
+        definition = next(pack for pack in SITE_PACKS if pack.pack_id == pack_id)
+        output = build_site_pack(definition, tmp_path, tmp_path)
+        assert (tmp_path / f"{category}.txt").is_file()
+        assert output.is_file()
+        with zipfile.ZipFile(output) as archive:
+            assert archive.namelist() == ["pack.db"]
+            with archive.open("pack.db") as database_bytes:
+                assert database_bytes.read(16) == b"SQLite format 3\x00"

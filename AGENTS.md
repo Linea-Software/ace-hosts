@@ -142,3 +142,14 @@ Console scripts (`ace-hosts-download`, `ace-hosts-merge`,
 - Conventional commit prefixes: `feat:`, `fix:`, `refactor:`, `tests:`,
   `docs:`, `chore:`. Subject line ≤50 chars, imperative mood, no trailing
   period. Commit after finishing and verifying a task.
+
+
+## Curated Free starter packs (2026-11-08)
+
+`starter/gambling-starter.txt` and `starter/streaming-starter.txt`
+are checked-in, minimal domain baselines. `build_site_packs.py` copies them
+to `hosts/<category>.txt` while building their Free pack ZIPs. The release
+workflow already publishes `hosts/*`, so plain lists and ZIPs travel together.
+They must remain small, manually reviewed, and separate from the full Pro
+`gambling` and `streaming` categories. Changes require coordinated catalog
+updates in Ace Blocker desktop and Ace Server.

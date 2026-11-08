@@ -1,7 +1,7 @@
 """Guard completeness and identity of the built-in behavioral catalog."""
 
 from scripts import source_catalog
-from scripts.build_site_packs import SITE_PACKS
+from scripts.build_site_packs import SITE_PACKS, STARTER_CATEGORIES
 
 
 def test_every_release_category_has_unique_sources_and_description():
@@ -19,6 +19,9 @@ def test_packs_are_unique_and_mapped_to_known_categories():
     assets = [pack.asset_name for pack in SITE_PACKS]
     assert len(ids) == len(set(ids))
     assert len(assets) == len(set(assets))
-    assert all(pack.category in source_catalog.category_names() for pack in SITE_PACKS)
-    assert {pack.category for pack in SITE_PACKS} == set(source_catalog.category_names())
-    assert len(SITE_PACKS) == 14
+    assert all(
+        pack.category in set(source_catalog.category_names()) | STARTER_CATEGORIES
+        for pack in SITE_PACKS
+    )
+    assert {pack.category for pack in SITE_PACKS} == set(source_catalog.category_names()) | STARTER_CATEGORIES
+    assert len(SITE_PACKS) == 16
