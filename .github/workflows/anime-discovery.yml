@@ -37,7 +37,7 @@ jobs:
       - name: Install Playwright Chromium
         run: uv run playwright install --with-deps chromium
       - name: Restore incremental crawler state
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: downloads/anime-discovery/crawl-state.sqlite
           key: ${{ runner.os }}-anime-crawl-${{ github.run_id }}
