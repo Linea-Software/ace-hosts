@@ -9,9 +9,7 @@ from __future__ import annotations
 
 # The discovery CLI imports this module lazily and only after its definitions.
 # pyright: reportImportCycles=false
-
 import http.client
-from html.parser import HTMLParser
 import ipaddress
 import json
 import logging
@@ -25,6 +23,7 @@ from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import cast
 from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
@@ -32,12 +31,15 @@ from urllib.robotparser import RobotFileParser
 
 from scripts.anime_browser import BrowserRenderer
 from scripts.anime_discovery import (
-    Evidence, SitePage, is_shared,
-    normalize_hostname, safe_hostname, site_categories,
+    Evidence,
+    SitePage,
+    _languages,  # pyright: ignore[reportPrivateUsage]
+    is_shared,
+    normalize_hostname,
+    safe_hostname,
+    site_categories,
 )
 from scripts.anime_search import parse_brave_results, search_queries
-
-from scripts.anime_discovery import _languages  # pyright: ignore[reportPrivateUsage]
 
 logger = logging.getLogger("ace-hosts.anime-crawler")
 AGENT = "ace-hosts-discovery/1.0"
@@ -434,7 +436,7 @@ class WebCrawler:
             try:
                 response = self.fetch(url, self.budget, timeout=self.config.timeout,
                                       max_bytes=max_bytes, headers=headers)
-            except (socket.timeout, TimeoutError, ConnectionError):
+            except (TimeoutError, ConnectionError):
                 if attempt == 0 and self.budget.remaining():
                     self.retries += 1
                     time.sleep(0.5)

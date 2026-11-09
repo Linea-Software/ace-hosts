@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import Browser, Route, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
+from typing_extensions import Self
 
 logger = logging.getLogger("ace-hosts.anime-browser")
 MAX_RENDER_BYTES = 1_000_000
@@ -59,7 +60,7 @@ class BrowserRenderer:
             self._stack.close()
             self._browser = None
 
-    def __enter__(self) -> BrowserRenderer:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
