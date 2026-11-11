@@ -1,17 +1,21 @@
 # Anime/Manga discovery and review
 
 ACE Hosts publishes one Anime/Manga site pack: **pack-anime-manga-pro → anime-manga.txt**.
-It combines UT1 manga, newedgex refined, and the curated and reviewed entries in
-`seeds/anime-manga.txt`. Anime Discovery proposes additions to this same seed
-through a maintainer-reviewed PR; no unmerged candidates are published.
+The pack combines UT1 manga, newedgex refined, and the reviewed entries in `seeds/anime-manga.txt`.
+Anime Discovery proposes additions to this seed in a pull request (PR).
+A maintainer must review the PR before the project publishes new candidates.
 
-The approximately 103,000-entry newedgex joined dataset is **discovery evidence only**.
-It is downloaded alongside category sources but is excluded from the released hosts
-file and cannot be promoted without a reviewed PR. Shared infrastructure is excluded.
+The newedgex joined dataset contains approximately 103,000 entries.
+This dataset is **discovery evidence only**.
+The downloader gets it with the other category sources.
+The release process does not add it to the published hosts file.
+A maintainer must approve candidates in a PR before they can enter the hosts file.
+The process also excludes shared infrastructure.
 
 ## Upstream catalogs and adapter formats
 
-The independent parser functions in scripts/anime_discovery.py extract only declared site-home URLs, not arbitrary URLs found in extension source code, icons, authentication endpoints, APIs or CDNs.
+The independent parser functions in scripts/anime_discovery.py read only declared site-home URLs.
+They do not collect arbitrary URLs from extension source code, icons, authentication endpoints, APIs, or CDNs.
 
 | Upstream | Explicit input and field | License / caveat |
 | --- | --- | --- |
@@ -25,27 +29,127 @@ The independent parser functions in scripts/anime_discovery.py extract only decl
 | kuiti cross-ecosystem index | kuiti/manga-source-index 01-all-sources/00-deduplicated-master.json → domain | MIT compilation, inherits upstream obligations; **derived only**, not an independent vote |
 | newedgex joined | newedgex/ani-manga-blocklist lists/joined-blacklist.txt | GPL-3.0; downloaded through the existing category downloader |
 
-Also investigated: shosetsuorg/extensions on GitLab. No stable, directly verified public manifest with explicit site URLs was established, so it is *not* fetched or treated as an adapter. Add it only after confirming the format, maintenance and license; never infer website domains by scanning arbitrary Lua source.
+The team also examined shosetsuorg/extensions on GitLab.
+It did not find a stable, directly verified public manifest with explicit site URLs.
+Thus, the pipeline does not download this source or use it as an adapter.
+Confirm its format, maintenance status, and license before you add it.
+Do not search arbitrary Lua source code to guess website domains.
 
-The supported metadata language codes are en, it, ja, ko, zh (simplified/traditional tags share the language family), id, vi, th, es, pt, fr, de, ru, tr, ar. No language is invented when absent. Content categories include anime, manga, manhwa, manhua, webtoon, light-novel, webnovel and scanlation, when declared; a reader-specific fallback is used when the source is nonspecific.
+The supported metadata language codes are en, it, ja, ko, zh, id, vi, th, es, pt, fr, de, ru, tr, and ar.
+Simplified and Traditional Chinese tags belong to the same zh language family.
+Do not assign a language when the source does not give one.
+
+Declared content categories include anime, manga, manhwa, manhua, webtoon, light-novel, webnovel, and scanlation.
+If a source does not give a specific category, the pipeline uses a reader-specific fallback.
 
 ## Discovery, scoring and promotion
 
-1. scripts/download_sources.py uses atomic downloads/manifests for anime-manga, including a joined dataset marked discovery-only; one failed fetch cannot leave a partial source to be merged.
-2. scripts/merge_hosts.py --category anime-manga builds the one Pro pack from regular upstream sources and reviewed seeds; it excludes joined-only candidates, exact-host exceptions and shared infrastructure.
-3. scripts/anime_discovery.py retains the original bounded catalog parsers and site inspection. With `--crawl-web` it also invokes scripts/anime_crawler.py: a persistent SQLite URL frontier seeded from public indexes, permitted user-specified directories, optional Brave Search API results, and original catalogs. The crawler prioritizes relevant links (including unknown external hosts), follows them recursively to a configurable depth, inspects homepage metadata, body text, language and bounded same-origin sitemap paths, and may reuse Playwright Chromium for missing static metadata. All raw links and search hits remain **unverified leads**, not independent votes or release approvals.
-4. Confidence is evidence-based: 100 for existing Pro, 95 for manually approved, 90 for two independent catalog families also in joined, 80 for two independent catalog families alone, 72 for independently discovered and thematically website-verified sites, 60 for a catalog-plus-joined site with inspected metadata, and 30 for weaker leads. Exclusions score 0. Independent families are deduplicated; mirrored/derived datasets and web links are **never** independent confirmations. These scores affect review order only, not approval.
-5. A candidate ledger (downloads/anime-discovery/candidates.jsonl) and preliminary catalog-confirmed shortlist (eligible-anime.txt) are produced as **intermediate outputs**. Website-verified candidates can be proposed even when absent from all catalogs and joined. The SQLite frontier and crawl-report.json / crawl-report.md record visited URLs, discoveries, sources, category/language distributions, errors and remaining budgets. None of these artifacts are published directly.
-6. scripts/propose_anime_sites.py prepares **one review PR** updating `seeds/anime-manga.txt` for: two independent catalog families; one catalog plus joined and inspected homepage/sitemap; or independent web leads with inspected thematic website metadata. Sitemap-only and outbound-link-only leads do not qualify. The English PR table includes content categories, languages, discovery sources, verification method/evidence, status and score. Human review is mandatory; the maintainer can remove false positives before merging. Up to 100 new candidates are proposed per run.
-7. The monthly release job merges reviewed seeds from main directly into the Pro file and validates output, exceptions and approved-source provenance. Unmerged artifacts and candidate reports have **no effect** on publication; catalog servers going offline cannot silently add domains. Raw joined still serves as a source integrity check and is never merged as a blocklist.
+1. **Download sources.** scripts/download_sources.py uses atomic downloads and success manifests for anime-manga.
+   It also downloads the joined dataset as discovery-only data.
+   A failed download cannot leave a partial source for merging.
 
-The weekly .github/workflows/anime-discovery.yml (Wednesday 04:30 UTC, or manually via GitHub Actions) restores an incremental SQLite cache, uploads crawl and review artifacts, tests proposed data and creates/updates `automation/anime-discovery` PR **only when new proposals exist**. The action preserves an existing review branch when human reviews or manual commits are detected. It needs repository Actions permission to create PRs, with `contents: write` and `pull-requests: write`. **Known issue:** the run on 2026-11-03 had fully succeeded until GitHub returned `GitHub Actions is not permitted to create or approve pull requests`. This is **not** a Python bug. Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** (organizational policies may override it), or configure `ANIME_DISCOVERY_PR_TOKEN` as a PAT/GitHub App token with authorized Contents/Pull requests write access. When the action is denied, the job fails with an actionable summary and direct `compare/main...automation/anime-discovery?expand=1` link to manually open the PR from the already-pushed branch. This is deliberate: a successful discovery without its requested PR should not appear green. A `GITHUB_TOKEN`-created PR may not automatically trigger `pull_request` CI; use the authorized token if that matters. The monthly release.yml publishes only anime-manga.txt and site-pack-anime-manga-pro.zip for this category. **A releases/latest/download URL is not available until a release containing the new asset has been published**. The desktop catalog must not be considered deployable before that release and the remote Ace Server catalog are updated.
+2. **Merge approved sources.** `scripts/merge_hosts.py --category anime-manga` builds one Pro pack.
+   It uses regular upstream sources and reviewed seeds.
+   It excludes joined-only candidates, exact-host exceptions, and shared infrastructure.
 
-List outputs are deterministically sorted for identical inputs. Candidate reports record a date, and SQLite ZIPs include build timestamps; byte-for-byte ZIP reproducibility is not guaranteed.
+3. **Discover candidates.** scripts/anime_discovery.py uses the existing limited catalog parsers and site inspections.
+   The `--crawl-web` option also starts scripts/anime_crawler.py.
+   The crawler uses a persistent SQLite URL list with priority order.
+   Public indexes, permitted user-specified directories, optional Brave Search API results, and original catalogs supply starting URLs.
+   The crawler gives priority to relevant links, including links to unknown external hosts.
+   It follows links recursively to the configured maximum depth.
+   It examines homepage metadata, body text, language, and limited same-origin sitemap paths.
+   It can also use Playwright Chromium when static metadata is missing.
+   Treat all raw links and search results as **unverified leads**.
+   They are not independent confirmations or release approvals.
+
+4. **Score evidence.** Assign confidence scores by the evidence in this table.
+   These scores determine review order.
+   They do not approve a candidate.
+
+   | Score | Evidence |
+   | --- | --- |
+   | 100 | Existing Pro host |
+   | 95 | Manually approved host |
+   | 90 | Two independent catalog families and a match in joined |
+   | 80 | Two independent catalog families without joined |
+   | 72 | Independent web discovery with verified website content relevant to the category |
+   | 60 | One catalog family, a match in joined, and inspected metadata |
+   | 30 | Weaker evidence |
+   | 0 | Excluded host |
+
+   Count each independent catalog family once.
+   **Do not** count mirrored datasets, derived datasets, or web links as independent confirmations.
+
+5. **Record candidates.** The pipeline writes `downloads/anime-discovery/candidates.jsonl` as a candidate ledger.
+   It writes `eligible-anime.txt` as a preliminary list of candidates confirmed by catalogs.
+   These files are **intermediate outputs**.
+   The pipeline can also propose website-verified candidates absent from all catalogs and joined.
+   The SQLite frontier preserves crawl state.
+   `crawl-report.json` and `crawl-report.md` record visited URLs, discoveries, sources, category and language distributions, errors, and remaining budgets.
+   Do not publish these intermediate files directly.
+
+6. **Propose approved evidence for review.** scripts/propose_anime_sites.py creates **one review PR** for `seeds/anime-manga.txt`.
+   A candidate qualifies through two independent catalog families.
+   It also qualifies through one catalog, joined, and an inspected homepage or sitemap.
+   Independent web leads qualify when inspected website metadata confirms the subject.
+   Sitemap-only and outbound-link-only leads do not qualify.
+   The English PR table shows content categories, languages, discovery sources, verification methods, evidence, status, and score.
+   A person must review the changes.
+   The maintainer can remove false positives before merging.
+   Propose no more than 100 new candidates in one run.
+
+7. **Publish reviewed data.** Each month, the release job merges reviewed seeds from main into the Pro file.
+   It validates output, exceptions, and approved-source provenance.
+   Unmerged files and candidate reports have **no effect** on publication.
+   Offline catalog servers cannot cause the release process to add domains.
+   The pipeline uses raw joined data only to check source integrity.
+   It never merges the joined dataset as a blocklist.
+
+## Weekly discovery and monthly release
+
+The weekly workflow is `.github/workflows/anime-discovery.yml`.
+It runs each Wednesday at 04:30 UTC.
+You can also start it manually in GitHub Actions.
+
+The workflow restores an incremental SQLite cache.
+It uploads crawl and review artifacts and tests proposed data.
+It creates or updates an `automation/anime-discovery` PR **only when new proposals exist**.
+When the workflow detects human review or manual commits, it preserves the existing review branch.
+
+The workflow needs permission to create PRs.
+Give it `contents: write` and `pull-requests: write` permissions.
+
+**Known issue (2026-11-03):** The workflow completed its other steps.
+GitHub then returned `GitHub Actions is not permitted to create or approve pull requests`.
+This was **not** a Python error.
+
+To permit PR creation, enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests**.
+An organization policy can override this setting.
+Alternatively, configure `ANIME_DISCOVERY_PR_TOKEN` with an authorized PAT or GitHub App token.
+The token needs Contents and Pull requests write access.
+
+If GitHub denies the action, the job fails and provides a summary.
+It also provides a `compare/main...automation/anime-discovery?expand=1` link.
+Use this link to open a PR manually from the branch that the workflow already pushed.
+This failure is intentional.
+A discovery run must not show success when it cannot create its required PR.
+A PR created with `GITHUB_TOKEN` might not trigger `pull_request` CI.
+Use the authorized token if that CI trigger is necessary.
+
+For this category, the monthly `release.yml` publishes only `anime-manga.txt` and `site-pack-anime-manga-pro.zip`.
+The `releases/latest/download` URL is not available until a release contains the new asset.
+Do not treat the desktop catalog as deployable before that release is available.
+The remote Ace Server catalog must also be updated.
+
+For identical inputs, the pipeline sorts list outputs in the same order.
+Candidate reports contain a date.
+SQLite ZIPs contain build timestamps.
+Thus, the pipeline does not guarantee byte-for-byte identical ZIP files.
 
 ## Local commands
 
-From the ace-hosts repository root:
+Run these commands from the ace-hosts repository root:
 
 ~~~bash
 uv run python scripts/download_sources.py --category anime-manga
@@ -60,22 +164,98 @@ uv run basedpyright
 uv lock --check
 ~~~
 
---refresh forces fresh catalog HTTPS requests; without it a successful local JSON cache may be reused. Failed refreshes do not silently fall back to stale cache data. --output-dir, --downloads-dir, --hosts-dir, --cache-dir, --timeout, --approved-file, --whitelist and --exceptions support isolated local runs.
+The `--refresh` option forces new HTTPS requests to the catalogs.
+Without this option, the pipeline can reuse a successful local JSON cache.
+If refresh fails, the pipeline does not use stale cache data without notice.
 
-**Crawling**: `--crawl-web` enables a separate persistent, prioritized frontier at `downloads/anime-discovery/crawl-state.sqlite`. It supports max requests, wall time, depth, concurrency, pages/domain and an optional `--crawl-directory-url https://...` (repeatable). Public directory seeds are listed in scripts/anime_crawler.py, and `--no-crawl-public-indexes` disables them. The 15 required language families are covered, including Simplified and Traditional Chinese query variants; a bounded official Brave Search integration activates only when `ACE_DISCOVERY_BRAVE_API_KEY` is supplied. With no key, directory, catalog and recursive link discovery continue. `--crawl-query-templates` accepts a UTF-8 JSON object mapping language codes to patterns such as `{"it":"{topic} leggere {terms}"}`. Templates are bounded and expanded using the configured language/category vocabulary. No search-results-page scraping is performed. DNS resolves to public IPs only and HTTP connects to a pinned vetted address with original-host TLS verification; redirects and private IP targets are not followed. Robots.txt, per-host pacing, retries for transient 5xx/timeouts, byte limits and explicit budgets apply. Browser rendering is same-origin and bounded, but Chrome DNS pinning is not implemented; avoid browser fallback in especially sensitive deployment networks. No login, CAPTCHA, rate-limit evasion or restricted-content scraping is performed. Pages disallowed by robots, HTTP access controls or errors do not qualify. A 404 robots.txt is treated as unrestricted. SQLite preserves the frontier between jobs; automatic cache restoration in GitHub Actions makes each weekly run incremental.
+These options support separate local runs:
+`--output-dir`, `--downloads-dir`, `--hosts-dir`, `--cache-dir`, `--timeout`, `--approved-file`, `--whitelist`, and `--exceptions`.
+
+## Web crawling
+
+The `--crawl-web` option enables a separate persistent URL list at `downloads/anime-discovery/crawl-state.sqlite`.
+The crawler assigns priorities to URLs.
+You can limit requests, elapsed time, depth, concurrent work, and pages per domain.
+Use `--crawl-directory-url https://...` to add a directory URL.
+You can repeat this option.
+
+The public directory starting points are in scripts/anime_crawler.py.
+Use `--no-crawl-public-indexes` to disable them.
+The crawler supports all 15 required language families.
+This includes search terms for Simplified and Traditional Chinese.
+
+The crawler can use the official Brave Search API within set limits.
+It activates this integration only when `ACE_DISCOVERY_BRAVE_API_KEY` is available.
+Without the key, directory, catalog, and recursive link discovery continue.
+
+`--crawl-query-templates` accepts a UTF-8 JSON object.
+The object maps language codes to patterns such as `{"it":"{topic} leggere {terms}"}`.
+The crawler limits and expands these patterns with the configured language and category vocabulary.
+It does not scrape search-results pages.
+
+DNS resolution accepts public IP addresses only.
+HTTP connects to a checked, fixed IP address and verifies TLS for the original hostname.
+The crawler does not follow redirects or connect to private IP targets.
+It follows robots.txt, per-host request intervals, response byte limits, and explicit work budgets.
+It retries transient 5xx responses and timeouts.
+
+Browser rendering stays on the same origin and has limits.
+**Chrome DNS pinning is not implemented.**
+Do not use browser fallback on deployment networks that require this protection.
+The crawler does not log in, solve CAPTCHAs, evade rate limits, or scrape restricted content.
+Do not accept pages that robots.txt, HTTP access rules, or errors prohibit.
+Treat an HTTP 404 response for robots.txt as no restriction.
+
+SQLite saves the URL list between jobs.
+GitHub Actions restores the cache automatically.
+Thus, each weekly run continues earlier discovery work.
 
 ## Manual review and exceptions
 
-- seeds/anime-manga.txt: curated **Pro** hosts and the sole approval gate for Anime Discovery proposals. The PR proposes exact hostname lines, which take effect only after merge. All edits remain subject to safety and exception checks.
-- whitelist.txt: exact-host global exceptions for every category.
-- exceptions/anime-manga.txt: category-wide exact-host exclusions.
+- `seeds/anime-manga.txt` contains curated **Pro** hosts.
+  It is the only approval point for Anime Discovery proposals.
+  A PR proposes exact hostname lines.
+  These lines take effect only after merge.
+  Apply all safety and exception checks to every change.
+- `whitelist.txt` contains global exact-host exceptions for all categories.
+- `exceptions/anime-manga.txt` contains category-wide exact-host exclusions.
 
-Do not strip or automatically broaden a hostname to its registrable root: www.example.org and example.org are distinct DNS hostnames. Conversely, never publish a shared infrastructure suffix like github.com, amazonaws.com or cloudfront.net, even if mentioned in joined. Review SHARED_SUFFIXES in the discovery module as part of maintenance. Do not infer that a DNS lookup proves content relevance, or that a DNS failure proves a site is dead. The system does not promise exhaustive live DNS reachability checks.
+Do not remove parts of a hostname or automatically change it to its registrable root.
+For example, `www.example.org` and `example.org` are different DNS hostnames.
+Never publish shared infrastructure suffixes such as `github.com`, `amazonaws.com`, or `cloudfront.net`.
+This rule also applies when the joined dataset contains these suffixes.
+Review `SHARED_SUFFIXES` in the discovery module during maintenance.
 
-The pipeline fails closed if no publishable source is available; discovery refuses joined input with fewer than 25,000 valid hostnames, and release validation rejects unapproved domains. The weekly discovery accepts multiple independent catalog families or independently collected web evidence, and allows optional core-catalog enforcement for stricter checks. **The monthly release does not depend on live discovery or catalog availability**: it publishes only merged approvals committed in `main` (plus existing Pro). No automatic mass promotion from joined is permitted.
+A DNS lookup does not prove that a website has relevant content.
+A DNS failure does not prove that a website is no longer in service.
+The system does not guarantee a complete live DNS reachability check.
+
+If no publishable source is available, the pipeline stops without publishing.
+Discovery rejects joined input with fewer than 25,000 valid hostnames.
+Release validation rejects domains without approval.
+
+Weekly discovery accepts evidence from multiple independent catalog families or independent web collection.
+You can enable optional core-catalog enforcement for stricter checks.
+
+**The monthly release does not depend on live discovery or catalog availability.**
+It publishes merged approvals committed in `main`, together with existing Pro data.
+Do not automatically add large groups of candidates from joined.
 
 ## Licenses, attribution and risks
 
-ACE Hosts Python code is MIT. The output data combines **distinct third-party licenses**: UT1 is CC BY-SA 4.0, newedgex GPL-3.0, reader extension definitions may be Apache-2.0, MIT/Apache dual-licensed or subject to their own attribution terms. The MIT license on kuiti's compilation does **not** relicense its underlying datasets. Preserve repository attribution and independently assess notice, share-alike, database and redistribution obligations before distributing the generated assets. The source-license labels and exported candidate evidence are an audit aid, not a legal opinion or redistribution permission.
+The ACE Hosts Python source code has an MIT license.
+The output data has **different third-party licenses**.
+UT1 uses CC BY-SA 4.0.
+newedgex uses GPL-3.0.
+Reader extension definitions can use Apache-2.0, MIT/Apache dual licenses, or other attribution terms.
+The MIT license on kuiti's compilation does **not** change the licenses of its source datasets.
 
-Newly reviewed additions can block additional sites or unrelated services hosted on multipurpose content sites. A higher hostname count is not a success criterion; review false positives and regression tests before every public release.
+Keep repository attribution.
+Before you distribute generated assets, evaluate notice, share-alike, database, and redistribution requirements independently.
+Source-license labels and exported candidate evidence help with audits.
+They are not legal advice or permission to redistribute.
+
+Newly reviewed entries can block more sites.
+They can also block unrelated services on sites that provide different types of content.
+A larger number of hostnames does not necessarily mean better results.
+Review false positives and regression tests before each public release.
