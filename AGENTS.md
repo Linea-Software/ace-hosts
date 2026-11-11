@@ -1,16 +1,17 @@
 # ace-hosts — Project Overview
 
-**ace-hosts** is a Python pipeline that downloads, merges, deduplicates and
-packages category-specific host lists for DNS-based blocking. It began as a
-reimplementation of the archived [`columndeeply/hosts`](https://github.com/columndeeply/hosts)
-adult-list tooling and now builds separate curated behavioural categories,
-including anime, manga, manhwa, manhua, messaging, gaming, social, news,
-forums, sports and AI tools, plus Ace Engine-compatible SQLite site-pack ZIPs.
+**ace-hosts** is a Python pipeline. It downloads, merges, removes duplicates from, and packages category-specific host lists for DNS-based blocking.
 
-This project lives inside the `ace-project` monorepo directory but is a
-**standalone git repository** (`C:\Projects\ace-project\ace-hosts`).
-The README carries a mandatory disclaimer stating the repo was fully developed
-by LLMs — do not remove it.
+The project began as a new implementation of the adult-list tools in the archived [`columndeeply/hosts`](https://github.com/columndeeply/hosts) project.
+It now builds separate curated categories for anime, manga, manhwa, manhua, messaging, gaming, social, news, forums, sports, and AI tools.
+It also builds Ace Engine-compatible SQLite site-pack ZIPs.
+
+This project is in the `ace-project` monorepo directory.
+However, **ace-hosts is a separate Git repository** (`C:\Projects\ace-project\ace-hosts`).
+
+The README contains a mandatory disclaimer.
+It states that LLMs developed the entire repository.
+Do not remove this disclaimer.
 
 ---
 
@@ -50,7 +51,8 @@ ace-hosts/
 
 ## Commands
 
-Always use `uv` — never bare `pip`/`python` outside the project environment.
+Always use `uv`.
+Do not run bare `pip` or `python` outside the project environment.
 
 | Command | Purpose |
 | --- | --- |
@@ -66,90 +68,101 @@ Always use `uv` — never bare `pip`/`python` outside the project environment.
 | `uv audit` | Check lockfile against OSV advisories |
 | `uv add <package>` / `uv remove <package>` | Maintainers only: change direct dependencies |
 
-Console scripts (`ace-hosts-download`, `ace-hosts-merge`,
-`ace-hosts-build-site-packs`) are installed as entry points into `scripts.*:main`.
+The installation provides these console scripts: `ace-hosts-download`, `ace-hosts-merge`, and `ace-hosts-build-site-packs`.
+Their entry points call `scripts.*:main`.
 
 ## Pipeline
 
-1. `source_catalog.py` is the canonical built-in taxonomy/source registry.
-2. `download_sources.py` fetches sources into `downloads/<category>/` with
-   retries/backoff/rate limiting. Each response is staged then atomically
-   published. A per-category `.ace-hosts-sources` manifest lists only sources
-   that succeeded in the current run.
-3. `merge_hosts.py` follows that manifest, parses inputs line-by-line, applies
-   `whitelist.txt`, deduplicates/sorts, and writes one `hosts/<category>.txt`.
-4. `validate_category_outputs.py` runs before pack generation and validates
-   current successful-source manifests, entry counts, sorted unique output,
-   per-category exclusions and upstream-license attribution in a streaming pass.
-5. `build_site_packs.py` hashes merged domains with XXH3-64, writes the exact
-   Ace Engine `entries`/`pack_meta` SQLite schema, and publishes one
-   `site-pack-*.zip` containing `pack.db` for each managed pack.
-6. `validate_release_assets.py` rejects any generated release file larger than
-   2 GiB before GitHub release publication.
+1. `source_catalog.py` is the authoritative registry for built-in categories and sources.
+2. `download_sources.py` downloads sources into `downloads/<category>/`.
+   It uses retries, backoff, and rate limits.
+   It first saves each response in a temporary file.
+   It then publishes the response with an atomic operation.
+   The `.ace-hosts-sources` manifest for each category lists only sources that succeeded in the current run.
+3. `merge_hosts.py` reads the success manifest.
+   It reads input files one line at a time.
+   It applies `whitelist.txt`, removes duplicate domains, and sorts the results.
+   It writes one `hosts/<category>.txt` file.
+4. `validate_category_outputs.py` runs before site-pack generation.
+   In one streaming pass, it checks current success manifests, entry counts, and sorted unique output.
+   It also checks category exclusions and upstream-license attribution.
+5. `build_site_packs.py` hashes merged domains with XXH3-64.
+   It writes the exact Ace Engine SQLite schema with the `entries` and `pack_meta` tables.
+   For each managed pack, it publishes one `site-pack-*.zip` file that contains `pack.db`.
+6. `validate_release_assets.py` checks generated release files before GitHub publishes a release.
+   It rejects files larger than 2 GiB.
 
 ## Conventions
 
-- **Dependency pins:** exact `==` versions in `pyproject.toml`; update through
-  `uv add` / `uv remove` and commit `uv.lock`.
-- **Type checking:** basedpyright must stay at 0 errors / 0 warnings.
-  - `reportUnusedCallResult = false` in `[tool.basedpyright]` is intentional.
-  - Use `X | None`, `collections.abc.Iterable` / `Iterator`, and typed
-    `argparse.Namespace` subclasses.
-- **Dual-mode scripts:** executable scripts that import the `scripts` package
-  must run directly and as installed entry points; keep the `__package__` bootstrap.
-- **Atomic writes:** generated text outputs go through
-  `utils.atomic_write_lines`; downloads must also stage before `os.replace`.
-- **Generated files:** never commit/edit generated `hosts/*` or `downloads/*`.
-- **Source metadata:** built-in categories/URLs/license labels belong in
-  `scripts/source_catalog.py`, not scattered through CLI modules.
-- **Memory:** stream source files line-by-line. The normal dedupe path holds one
-  set of domains in memory; do not load entire source files separately.
-- **Compatibility:** release asset names are consumed by ace-engine and
-  ace-blocker-site; trace cross-repo consumers before renaming `.txt` or
-  `site-pack-*.zip` artifacts.
-- **Licensing:** MIT covers this repository's source code, not automatically the
-  third-party generated datasets. Keep source-license metadata/documentation.
-- **i18n:** none — CLI output is English.
+- **Dependency versions:** Specify exact `==` versions in `pyproject.toml`.
+  Use `uv add` or `uv remove` to update direct dependencies.
+  Commit the updated `uv.lock`.
+- **Type checking:** Keep basedpyright at 0 errors and 0 warnings.
+  The `reportUnusedCallResult = false` setting in `[tool.basedpyright]` is intentional.
+  Use `X | None`, `collections.abc.Iterable` / `Iterator`, and typed `argparse.Namespace` subclasses.
+- **Script execution:** Executable scripts that import `scripts` must support direct execution and installed entry points.
+  Keep the `__package__` bootstrap.
+- **Atomic writes:** Write generated text through `utils.atomic_write_lines`.
+  Stage downloads before you call `os.replace`.
+- **Generated files:** Do not edit or commit generated `hosts/*` or `downloads/*` files.
+- **Source metadata:** Keep built-in categories, URLs, and license labels in `scripts/source_catalog.py`.
+  Do not distribute this metadata across CLI modules.
+- **Memory use:** Read source files one line at a time.
+  The normal duplicate-removal process keeps one set of domains in memory.
+  Do not also load entire source files into memory.
+- **Compatibility:** ace-engine and ace-blocker-site use the release asset names.
+  Find all consumers in the other repositories before you rename `.txt` or `site-pack-*.zip` files.
+- **Licensing:** MIT covers the repository source code.
+  It does not automatically cover generated third-party datasets.
+  Keep source-license metadata and documentation.
+- **Internationalization:** There is no i18n support.
+  CLI output is in English.
 
 ## Known Pitfalls
 
-- Site-pack databases must stay byte-for-byte compatible at the schema/hash
-  contract level with ace-engine: XXH3-64 hashes stored as signed SQLite INTEGERs,
-  `format_version = 1.0`, and a ZIP entry named exactly `pack.db`.
-- GitHub release assets are intentionally unsplit. The release workflow must fail
-  before publication if any generated file is larger than 2 GiB.
-- Windows shells do not expand globs; `resolve_input_files()` expands them.
-- Automatic merging must prefer the success manifest so failed/removed sources
-  from older runs cannot silently reappear.
-- Category downloads are isolated under `downloads/<category>/`; there is no
-  legacy flat adult-download fallback.
-- Sources go stale; dead URLs are tolerated individually but the source catalog
-  and README must be kept current.
-- Local Python may be newer than the declared Python 3.10 minimum; do not use
-  syntax unavailable on 3.10.
+- **Site-pack compatibility:** Keep the schema and hash representation byte-for-byte compatible with ace-engine.
+  Store XXH3-64 hashes as signed SQLite INTEGER values.
+  Keep `format_version = 1.0`.
+  Name the ZIP entry exactly `pack.db`.
+- **Release size:** GitHub release assets must remain in single files.
+  The release workflow must stop before publication if a generated file exceeds 2 GiB.
+- **Windows globs:** Windows shells do not expand glob patterns.
+  The `resolve_input_files()` function expands these patterns.
+- **Source manifests:** Automatic merging must use the current success manifest.
+  Do not reintroduce failed or removed sources from older runs.
+- **Download directories:** Store each category under `downloads/<category>/`.
+  Do not use a legacy flat adult-download fallback.
+- **Stale sources:** Individual dead URLs do not stop the pipeline.
+  Keep the source catalog and README current.
+- **Python versions:** A local Python installation can be newer than Python 3.10.
+  Do not use syntax that Python 3.10 cannot run.
 
 ## Testing
 
-- `uv run pytest` covers parsing, source/catalog handling, failed-download
-  cleanup, category manifests, merge/whitelist behavior, site-pack schema/hash
-  compatibility, release-size validation and round trips.
-- Tests never touch the network or depend on existing `downloads/` contents.
+- `uv run pytest` tests parsing, source/catalog handling, and failed-download cleanup.
+  It also tests category manifests, merge/whitelist behavior, and site-pack schema/hash compatibility.
+  Tests cover release-size validation and round trips.
+- Tests must not access the network.
+  Tests must not depend on existing `downloads/` contents.
 - `uv run basedpyright` must report 0 errors and 0 warnings.
-- CI additionally runs compileall and a merge/site-pack smoke test.
+- CI also runs compileall and a merge/site-pack smoke test.
 
 ## Git
 
-- Conventional commit prefixes: `feat:`, `fix:`, `refactor:`, `tests:`,
-  `docs:`, `chore:`. Subject line ≤50 chars, imperative mood, no trailing
-  period. Commit after finishing and verifying a task.
-
+- Use these conventional commit prefixes: `feat:`, `fix:`, `refactor:`, `tests:`, `docs:`, and `chore:`.
+- Write a subject line of no more than 50 characters.
+- Use the imperative mood.
+- Do not end the subject line with a period.
+- Commit after you complete and verify a task.
 
 ## Curated Free starter packs (2026-11-08)
 
-`starter/gambling-starter.txt` and `starter/streaming-starter.txt`
-are checked-in, minimal domain baselines. `build_site_packs.py` copies them
-to `hosts/<category>.txt` while building their Free pack ZIPs. The release
-workflow already publishes `hosts/*`, so plain lists and ZIPs travel together.
-They must remain small, manually reviewed, and separate from the full Pro
-`gambling` and `streaming` categories. Changes require coordinated catalog
-updates in Ace Blocker desktop and Ace Server.
+`starter/gambling-starter.txt` and `starter/streaming-starter.txt` contain small, manually selected baseline domain lists.
+These files are committed to the repository.
+`build_site_packs.py` copies them to `hosts/<category>.txt` when it builds their Free pack ZIPs.
+The release workflow publishes `hosts/*`.
+Thus, the text lists and ZIPs are released together.
+
+Keep both starter packs small and manually reviewed.
+Keep them separate from the full Pro `gambling` and `streaming` categories.
+Coordinate catalog changes with Ace Blocker desktop and Ace Server.
