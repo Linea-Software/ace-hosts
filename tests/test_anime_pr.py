@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 import pytest
 import requests
@@ -46,6 +47,27 @@ def test_scraping_public_site_metadata_and_links(monkeypatch: pytest.MonkeyPatch
     assert len(leads) == 1
     assert leads[0].hostname == "linked.org"
     assert leads[0].family == "web-lead"
+
+
+def test_catalog_scraping_logs_each_site(monkeypatch: pytest.MonkeyPatch,
+                                         caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="ace-hosts.anime-discovery")
+    lead = discovery.Evidence("reader.example.org", "Reader", "manga", (),
+                              "aidoku", None, "aidoku", "baseURL")
+
+    def fake_scrape(_session: requests.Session, host: str, _joined: set[str],
+                    **_kwargs: object) -> list[discovery.Evidence]:
+        assert host == "reader.example.org"
+        return [lead]
+
+    monkeypatch.setattr(discovery, "scrape_site", fake_scrape)
+    with requests.Session() as session:
+        evidence = discovery.scrape_catalog_sites(
+            session, [lead], {"reader.example.org"}, set(), set(), max_sites=1,
+        )
+    assert evidence == [lead]
+    assert "site scraping: visiting reader.example.org (1/1)" in caplog.text
+    assert "site scraping: finished reader.example.org (1 evidence item(s))" in caplog.text
 
 
 def test_scraping_respects_robots_and_refuses_private_targets(monkeypatch: pytest.MonkeyPatch):

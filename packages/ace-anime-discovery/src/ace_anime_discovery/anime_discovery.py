@@ -632,13 +632,18 @@ def scrape_catalog_sites(session: requests.Session, records: list[Evidence], joi
     sites.sort(key=lambda host: (-len(groups[host]), -int(host in joined), host))
     scraped: list[Evidence] = []
     browser = BrowserRenderer(max_sites=max_browser_sites) if browser_fallback else None
+    total = min(len(sites), max_sites)
     try:
-        for host in sites[:max_sites]:
+        for index, host in enumerate(sites[:max_sites], start=1):
+            logger.info("site scraping: visiting %s (%d/%d)", host, index, total)
             try:
-                scraped.extend(scrape_site(
+                evidence = scrape_site(
                     session, host, joined, timeout=timeout, browser=browser,
                     scrape_sitemap=scrape_sitemaps,
-                ))
+                )
+                scraped.extend(evidence)
+                logger.info("site scraping: finished %s (%d evidence item(s))",
+                            host, len(evidence))
             except (OSError, ValueError, requests.RequestException) as error:
                 logger.info("site %s skipped: %s", host, error)
     finally:

@@ -1,7 +1,10 @@
 """Further offline tests for ranked links, redirects, retries and robots."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+import pytest
 
 from scripts import anime_crawler as crawler
 from scripts import anime_discovery as discovery
@@ -21,7 +24,10 @@ def test_relevance_ranked_links_over_navigation() -> None:
                      "https://directory.example.org/webtoon/creators")
 
 
-def test_robots_denial_and_redirect_refusal(tmp_path: Path) -> None:
+def test_robots_denial_and_redirect_refusal(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="ace-hosts.anime-crawler")
     requests: list[str] = []
 
     def forbid(url: str, _budget: crawler.RequestBudget, **_kw: object) -> crawler.PageResponse:
@@ -38,6 +44,8 @@ def test_robots_denial_and_redirect_refusal(tmp_path: Path) -> None:
     assert requests == ["https://directory.example.org/robots.txt"]
     assert stats["urls_crawled"] == 0
     assert stats["urls_failed"] == 1
+    assert "crawl visiting: host=directory.example.org path=/" in caplog.text
+    assert "crawl skipped: host=directory.example.org path=/" in caplog.text
 
     requests.clear()
 

@@ -752,7 +752,10 @@ class WebCrawler:
         return robots is None or robots.can_fetch(AGENT, url)
 
     def _inspect(self, page: CrawlPage) -> InspectedPage:
-        host = urlsplit(page.url).hostname or ""
+        parts = urlsplit(page.url)
+        host = parts.hostname or ""
+        logger.info("crawl visiting: host=%s path=%s source=%s depth=%d",
+                    host, parts.path or "/", page.source, page.depth)
         if not self._allowed(page.url):
             reason = ("budget-exhausted" if not self.budget.remaining()
                       else self._robots_failures.get(host, "robots denied or unavailable"))
@@ -818,6 +821,8 @@ class WebCrawler:
         page = data.page
         host = urlsplit(page.url).hostname or ""
         if data.error:
+            logger.info("crawl skipped: host=%s path=%s reason=%s",
+                        host, urlsplit(page.url).path or "/", data.error)
             if data.error != "budget-exhausted" and page.url == "https://" + host + "/":
                 self.frontier.clear_homepage_evidence(host)
             self.frontier.complete(page, data.error)
@@ -842,6 +847,8 @@ class WebCrawler:
                 method = "html-rendered"
                 self.browser_rendered += 1
         if categories and page.kind != "directory" and safe_hostname(host):
+            logger.info("crawl matched: host=%s categories=%s method=%s",
+                        host, ",".join(categories), method)
             # Internal article pages must not masquerade as verified homepages.
             repository = ("site-homepage" if page.url == "https://" + host + "/"
                           else "site-internal-page")
@@ -878,6 +885,8 @@ class WebCrawler:
 
     def run(self) -> dict[str, object]:
         browser = BrowserRenderer(max_sites=self.config.max_browser) if self.config.max_browser else None
+        logger.info("crawl started: workers=%d request_limit=%d time_limit=%.0fs",
+                    self.config.concurrency, self.config.max_requests, self.config.max_seconds)
         try:
             with ThreadPoolExecutor(max_workers=self.config.concurrency) as workers:
                 while self.budget.remaining():
@@ -903,6 +912,10 @@ class WebCrawler:
             "websites_verified": len({e.hostname for e in records if e.repository == "site-homepage"}),
             "language_distribution": dict(Counter(lang for e in records for lang in e.languages)),
         })
+        logger.info("crawl finished: requests=%d visited=%s verified=%s failed=%s duration=%.1fs",
+                    self.budget.requests, stats.get("urls_crawled"),
+                    stats["websites_verified"], stats.get("urls_failed"),
+                    time.monotonic() - self.started)
         return stats
 
 

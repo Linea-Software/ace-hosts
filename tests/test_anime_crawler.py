@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import socket
 from pathlib import Path
 import pytest
@@ -81,7 +82,10 @@ def test_persistent_priority_frontier_resume(tmp_path: Path) -> None:
     reopened.close()
 
 
-def test_recursive_directory_finds_unknown_site_and_requires_human_review(tmp_path: Path) -> None:
+def test_recursive_directory_finds_unknown_site_and_requires_human_review(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="ace-hosts.anime-crawler")
     visited: list[str] = []
 
     def fake_fetch(url: str, _budget: crawler.RequestBudget, **_kwargs: object) -> crawler.PageResponse:
@@ -114,6 +118,9 @@ def test_recursive_directory_finds_unknown_site_and_requires_human_review(tmp_pa
         web.close()
     assert stats["websites_verified"] == 1
     assert "https://unknown-reader.example.org/" in visited
+    assert "crawl visiting: host=unknown-reader.example.org path=/" in caplog.text
+    assert "crawl matched: host=unknown-reader.example.org categories=" in caplog.text
+    assert "crawl finished: requests=" in caplog.text
     assert not any(e.hostname == "github.com" for e in evidence)
     assert {e.repository for e in evidence if e.hostname == "unknown-reader.example.org"} == {
         "web-link", "site-homepage",
