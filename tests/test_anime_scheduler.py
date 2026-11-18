@@ -168,3 +168,118 @@ def test_joined_site_needs_homepage_evidence_for_review(tmp_path: Path) -> None:
         assert approved == set()
     finally:
         crawl.close()
+
+
+def test_joined_verified_candidate_reaches_review_pr(tmp_path: Path) -> None:
+    import json
+
+    from ace_anime_discovery.anime_discovery import classify
+    from ace_anime_discovery.propose_anime_sites import propose_sites
+
+    host = "site.example.org"
+    evidence = [
+        Evidence(host, None, "unknown", (), "joined-candidate", None,
+                 "web-lead", "domain", "newedgex-joined"),
+        Evidence(host, "Site", "manga", (), "site-homepage", None,
+                 "web-lead", "html-title-description", f"https://{host}/"),
+    ]
+    ledger, approved = classify(evidence, {host}, set(), set(), set())
+    assert approved == set()
+    path = tmp_path / "ledger.jsonl"
+    path.write_text(json.dumps(ledger[0]) + "\n", encoding="utf-8")
+    seeds = tmp_path / "seeds.txt"
+    seeds.write_text("", encoding="utf-8")
+    pro = tmp_path / "pro.txt"
+    pro.write_text("", encoding="utf-8")
+    accepted = propose_sites(path, seeds, pro, tmp_path / "whitelist.txt",
+                             tmp_path / "exclusions.txt", tmp_path / "pr.md")
+    assert accepted == [host]
+    assert seeds.read_text(encoding="utf-8").strip() == host
+
+
+def test_joined_homepage_requires_more_than_incidental_blog_reference(tmp_path: Path) -> None:
+    from ace_anime_discovery.anime_crawler import PageResponse
+
+    def get(url: str, _budget: object, **_kwargs: object) -> PageResponse:
+        if url.endswith("/robots.txt"):
+            return PageResponse(200, "text/plain", b"User-agent: *\nAllow: /\n")
+        if url.endswith("/sitemap.xml"):
+            return PageResponse(404, "text/plain", b"")
+        return PageResponse(200, "text/html", (
+            b"<title>General news</title><body>Today we discussed manga"
+            b" in an article.</body>"
+        ))
+
+    crawl = WebCrawler(CrawlConfig(tmp_path / "safe.sqlite", max_browser=0,
+                                   delay=0, max_joined_hosts=1), fetch=get)
+    try:
+        crawl.seed_joined(["news.example.org"])
+        result = crawl.run()
+        assert result["websites_verified"] == 0
+        assert not any(row.repository == "site-homepage"
+                       for row in crawl.frontier.records())
+    finally:
+        crawl.close()
+
+
+def test_interrupted_evidence_write_requeues_page(tmp_path: Path) -> None:
+    import pytest
+    from typing import cast
+    from ace_anime_discovery.anime_crawler import InspectedPage
+
+    path = tmp_path / "interrupted.sqlite"
+    crawler = WebCrawler(CrawlConfig(path, max_browser=0))
+    assert crawler.frontier.add("https://manga.example.org/", depth=0,
+                                source="catalog")
+    page = crawler.frontier.claim(1, 3)[0]
+    original = crawler.frontier.evidence
+
+    def interrupted(entry: Evidence) -> None:
+        del entry
+        raise OSError("filesystem or database write failed")
+
+    crawler.frontier.evidence = interrupted  # type: ignore[method-assign]
+    with pytest.raises(OSError):
+        crawler._record(InspectedPage(page, "Manga", ("manga",), (), (), ()), None)  # pyright: ignore[reportPrivateUsage]
+    crawler.frontier.evidence = original  # type: ignore[method-assign]
+    state = cast(tuple[str] | None, crawler.frontier.conn.execute(
+        "SELECT status FROM frontier WHERE url=?", (page.url,)
+    ).fetchone())
+    assert state == ("inflight",)
+    crawler.close()
+
+    resumed = Frontier(path)
+    try:
+        assert resumed.claim(1, 3) == [page]
+    finally:
+        resumed.close()
+
+
+def test_joined_input_change_resets_cursor_and_keeps_seen_hosts(tmp_path: Path) -> None:
+    from ace_anime_discovery.anime_crawler import fingerprint_file
+
+    source = tmp_path / "joined.txt"
+    source.write_text("a.example.org\nb.example.org\nc.example.org\n", encoding="utf-8")
+    fingerprint_a = fingerprint_file(source)
+    frontier_path = tmp_path / "rotating.sqlite"
+    config = CrawlConfig(frontier_path, max_joined_hosts=2, max_browser=0)
+    first = WebCrawler(config)
+    try:
+        first.seed_joined(source.read_text(encoding="utf-8").splitlines(),
+                          fingerprint=fingerprint_a)
+        assert first.frontier.joined_cursor() == 2
+        assert first.frontier.seen_hosts() == {"a.example.org", "b.example.org"}
+    finally:
+        first.close()
+    source.write_text("new.example.org\na.example.org\nb.example.org\nc.example.org\n",
+                      encoding="utf-8")
+    second = WebCrawler(config)
+    try:
+        second.seed_joined(source.read_text(encoding="utf-8").splitlines(),
+                           fingerprint=fingerprint_file(source))
+        assert second.frontier.seen_hosts() == {
+            "new.example.org", "a.example.org", "b.example.org", "c.example.org",
+        }
+        assert second.frontier.joined_cursor() == 4
+    finally:
+        second.close()

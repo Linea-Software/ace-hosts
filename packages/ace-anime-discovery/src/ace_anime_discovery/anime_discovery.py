@@ -995,7 +995,7 @@ def main(argv: list[str] | None = None) -> int:
                 scrape_sitemaps=args.scrape_sitemaps,
             ))
     if args.crawl_web:
-        from ace_anime_discovery.anime_crawler import CrawlConfig, crawl_web
+        from ace_anime_discovery.anime_crawler import CrawlConfig, crawl_web, fingerprint_file
         import os
         try:
             templates: dict[str, str] | None = None
@@ -1027,6 +1027,9 @@ def main(argv: list[str] | None = None) -> int:
                 joined_hosts=utils.iter_domains(
                     args.downloads_dir / "anime-manga" / "newedgex-joined.txt"
                 ) if (args.downloads_dir / "anime-manga" / "newedgex-joined.txt").is_file() else (),
+                joined_fingerprint=fingerprint_file(
+                    args.downloads_dir / "anime-manga" / "newedgex-joined.txt"
+                ) if (args.downloads_dir / "anime-manga" / "newedgex-joined.txt").is_file() else None,
                 skip_hosts=(
                     _load_hostnames(args.hosts_dir / "anime-manga.txt")
                     | _load_hostnames(args.approved_file)

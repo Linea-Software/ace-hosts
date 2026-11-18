@@ -9,6 +9,7 @@ from __future__ import annotations
 
 # The discovery CLI imports this module lazily and only after its definitions.
 # pyright: reportImportCycles=false
+import hashlib
 import http.client
 import ipaddress
 import json
@@ -308,6 +309,9 @@ class Frontier:
             CREATE TABLE IF NOT EXISTS run_state (
                 key TEXT PRIMARY KEY, value INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS input_fingerprints (
+                key TEXT PRIMARY KEY, digest TEXT NOT NULL
+            );
         """)
         self.conn.execute("CREATE TEMP TABLE exhausted_hosts(host TEXT PRIMARY KEY)")
         self._claimed_per_host: Counter[str] = Counter()
@@ -345,7 +349,8 @@ class Frontier:
             return
         with self.conn:
             self.conn.execute(
-                ("INSERT INTO evidence VALUES(?,?,?,?,?,?,?) "
+                ("INSERT INTO evidence(host,category,repository,field,origin,payload,last_seen) "
+                 + "VALUES(?,?,?,?,?,?,?) "
                  + "ON CONFLICT(host,category,repository,field,origin) "
                  + "DO UPDATE SET payload=excluded.payload,last_seen=excluded.last_seen"),
                 (entry.hostname, entry.category, entry.repository, entry.field,
@@ -443,6 +448,20 @@ class Frontier:
                 origin=cast(str | None, data.get("origin")),
             ))
         return result
+
+    def set_joined_fingerprint(self, fingerprint: str) -> None:
+        # Input list order can change between GitHub Actions runs.
+        previous = cast(tuple[str] | None, self.conn.execute(
+            "SELECT digest FROM input_fingerprints WHERE key='joined'"
+        ).fetchone())
+        if previous is None or previous[0] != fingerprint:
+            with self.conn:
+                self.set_joined_cursor(0)
+                self.conn.execute(
+                    ("INSERT INTO input_fingerprints(key,digest) VALUES('joined',?) "
+                     + "ON CONFLICT(key) DO UPDATE SET digest=excluded.digest"),
+                    (fingerprint,),
+                )
 
     def joined_cursor(self) -> int:
         row = cast(tuple[int] | None, self.conn.execute(
@@ -542,6 +561,8 @@ class WebCrawler:
             if safe_hostname(entry.hostname) and entry.hostname not in skip_hosts:
                 families.setdefault(entry.hostname, set()).add(entry.family)
         # Previous runs should not monopolize a small per-run seed allowance.
+        if self.config.max_seed_hosts == 0:
+            return
         seen = self.frontier.seen_hosts()
         candidates = sorted(families, key=lambda host: (
             host in seen,
@@ -561,7 +582,8 @@ class WebCrawler:
                 break
 
     def seed_joined(self, hosts: Iterable[str], *,
-                    skip_hosts: Collection[str] = ()) -> None:
+                    skip_hosts: Collection[str] = (),
+                    fingerprint: str | None = None) -> None:
         """Incrementally inspect untrusted community domains over many runs.
 
         Joined-list evidence never counts as an independent catalog or
@@ -569,6 +591,8 @@ class WebCrawler:
         """
         if self.config.max_joined_hosts == 0:
             return
+        if fingerprint is not None:
+            self.frontier.set_joined_fingerprint(fingerprint)
         offset = self.frontier.joined_cursor()
         previously_seen = self.frontier.seen_hosts()
         selected = 0
@@ -705,6 +729,20 @@ class WebCrawler:
             parser.feed(text)
             categories = site_categories(parser.topic_text)
             links = ranked_links(text, page.url)
+            if page.source == "joined-candidate":
+                # A broad community blocklist is not reliable evidence on its
+                # own. Ignore incidental mentions in a generic blog/body.
+                prominent = site_categories(" ".join((
+                    parser.title, parser.og_title, parser.description,
+                    parser.keywords, *parser.headings, *parser.json_ld,
+                )))
+                thematic_internal = sum(
+                    urlsplit(link).hostname == host and
+                    bool(site_categories(unquote(urlsplit(link).path)))
+                    for link in links
+                )
+                if not prominent and thematic_internal < 2:
+                    categories = ()
             paths: list[str] = []
             # One permitted sitemap per domain. It supplies path hints only,
             # not independent verification and never unbounded sitemap indexes.
@@ -738,8 +776,8 @@ class WebCrawler:
     def _record(self, data: InspectedPage, browser: BrowserRenderer | None) -> None:
         page = data.page
         host = urlsplit(page.url).hostname or ""
-        self.frontier.complete(page, data.error)
         if data.error:
+            self.frontier.complete(page, data.error)
             self.errors[data.error] += 1
             return
         if page.url == "https://" + host + "/":
@@ -769,6 +807,7 @@ class WebCrawler:
             self.frontier.add(loc, depth=page.depth + 1,
                               source="sitemap:" + host, priority=25)
         if page.depth >= self.config.max_depth or not (categories or page.kind == "directory"):
+            self.frontier.complete(page)
             return
         for href in data.links:
             url = normalize_url(urljoin(page.url, href))
@@ -787,6 +826,9 @@ class WebCrawler:
                                   source="outbound:" + host, priority=55)
                 self.frontier.evidence(Evidence(target, None, "manga", (), "web-link", None,
                                                "web-lead", "href", origin=page.url))
+        # A page is done only after discovered links and verification evidence
+        # are durable. Interrupted processing is retried on next startup.
+        self.frontier.complete(page)
 
     def run(self) -> dict[str, object]:
         browser = BrowserRenderer(max_sites=self.config.max_browser) if self.config.max_browser else None
@@ -818,18 +860,29 @@ class WebCrawler:
         return stats
 
 
+def fingerprint_file(path: Path) -> str:
+    """Stream a SHA-256 of the current upstream list, without loading it."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while block := handle.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def crawl_web(records: list[Evidence], config: CrawlConfig, *,
               directories: tuple[str, ...] = (), public_indexes: bool = True,
               search_token: str | None = None,
               search_templates: dict[str, str] | None = None,
               joined_hosts: Iterable[str] = (),
+              joined_fingerprint: str | None = None,
               skip_hosts: Collection[str] = (),
               ) -> tuple[list[Evidence], dict[str, object]]:
     crawler = WebCrawler(config)
     try:
         crawler.seed(records, directories=directories, with_public_indexes=public_indexes,
                      skip_hosts=skip_hosts)
-        crawler.seed_joined(joined_hosts, skip_hosts=skip_hosts)
+        crawler.seed_joined(joined_hosts, skip_hosts=skip_hosts,
+                            fingerprint=joined_fingerprint)
         crawler.search(search_token, templates=search_templates)
         stats = crawler.run()
         return crawler.frontier.records(), stats
