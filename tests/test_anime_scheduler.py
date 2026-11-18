@@ -283,3 +283,101 @@ def test_joined_input_change_resets_cursor_and_keeps_seen_hosts(tmp_path: Path) 
         assert second.frontier.joined_cursor() == 4
     finally:
         second.close()
+
+
+def test_robots_rate_policies_override_short_default_delay(tmp_path: Path) -> None:
+    from ace_anime_discovery.anime_crawler import PageResponse
+
+    for index, policy in enumerate(("Crawl-delay: 120", "Request-rate: 1/100")):
+        def fetch(url: str, _budget: object, **_kw: object) -> PageResponse:
+            assert url.endswith("/robots.txt")
+            return PageResponse(200, "text/plain",
+                                f"User-agent: *\n{policy}\nAllow: /".encode())
+        web = WebCrawler(CrawlConfig(tmp_path / f"policy-{index}.sqlite",
+                                     max_browser=0, delay=0.6), fetch=fetch)
+        try:
+            assert web._allowed("https://series.example.org/")  # pyright: ignore[reportPrivateUsage]
+            assert web._host_delay["series.example.org"] >= (120 if index == 0 else 100)  # pyright: ignore[reportPrivateUsage]
+        finally:
+            web.close()
+
+
+def test_failed_robots_fetch_is_cached_for_whole_run(tmp_path: Path) -> None:
+    from ace_anime_discovery.anime_crawler import PageResponse
+
+    seen: list[str] = []
+
+    def fetch(url: str, _budget: object, **_kw: object) -> PageResponse:
+        seen.append(url)
+        return PageResponse(429, "text/plain", b"")
+
+    web = WebCrawler(CrawlConfig(tmp_path / "limited.sqlite",
+                                 max_browser=0, delay=0), fetch=fetch)
+    try:
+        assert not web._allowed("https://limited.example.org/a")  # pyright: ignore[reportPrivateUsage]
+        assert not web._allowed("https://limited.example.org/b")  # pyright: ignore[reportPrivateUsage]
+        assert seen == ["https://limited.example.org/robots.txt"]
+        assert web._robots_failures["limited.example.org"] == "robots-rate-limited"  # pyright: ignore[reportPrivateUsage]
+    finally:
+        web.close()
+
+
+def test_article_page_cannot_verify_generic_news_homepage(tmp_path: Path) -> None:
+    from ace_anime_discovery.anime_crawler import PageResponse
+    from ace_anime_discovery.anime_discovery import classify
+
+    host = "news.example.org"
+
+    def fetch(url: str, _budget: object, **_kw: object) -> PageResponse:
+        if url.endswith("/robots.txt"):
+            return PageResponse(200, "text/plain", b"User-agent: *\nAllow: /\n")
+        if url.endswith("/sitemap.xml"):
+            return PageResponse(200, "application/xml", (
+                f"<urlset><url><loc>https://{host}/manga-article</loc></url></urlset>"
+            ).encode())
+        if url.endswith("/manga-article"):
+            return PageResponse(200, "text/html",
+                                b"<title>How manga changed modern media</title>")
+        return PageResponse(200, "text/html", b"<title>General technology news</title>")
+
+    web = WebCrawler(CrawlConfig(tmp_path / "news.sqlite", max_browser=0,
+                                 delay=0, max_depth=2), fetch=fetch)
+    try:
+        web.seed_joined([host])
+        web.run()
+        evidence = web.frontier.records()
+        assert any(item.repository == "site-internal-page" for item in evidence)
+        assert not any(item.repository == "site-homepage" for item in evidence)
+        ledger, approved = classify(evidence, {host}, set(), set(), set())
+        assert ledger[0]["review_eligible"] is False
+        assert approved == set()
+    finally:
+        web.close()
+
+
+def test_root_429_invalidates_previous_homepage_evidence(tmp_path: Path) -> None:
+    from ace_anime_discovery.anime_crawler import PageResponse
+    from ace_anime_discovery.anime_discovery import classify
+
+    host = "site.example.org"
+
+    def fetch(url: str, _budget: object, **_kw: object) -> PageResponse:
+        assert url.endswith("/robots.txt")
+        return PageResponse(429, "text/plain", b"")
+
+    web = WebCrawler(CrawlConfig(tmp_path / "denied.sqlite", max_browser=0,
+                                 delay=0), fetch=fetch)
+    try:
+        web.seed_joined([host])
+        web.frontier.evidence(Evidence(host, "Manga", "manga", (),
+                                      "site-homepage", None, "web-lead",
+                                      "html-title-description", f"https://{host}/"))
+        assert any(e.repository == "site-homepage" for e in web.frontier.records())
+        web.run()
+        records = web.frontier.records()
+        assert not any(e.repository == "site-homepage" for e in records)
+        ledger, approved = classify(records, {host}, set(), set(), set())
+        assert ledger[0]["review_eligible"] is False
+        assert approved == set()
+    finally:
+        web.close()

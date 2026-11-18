@@ -296,9 +296,8 @@ class Frontier:
             self.conn.execute(
                 "ALTER TABLE evidence ADD COLUMN last_seen REAL NOT NULL DEFAULT 0"
             )
-            self.conn.execute(
-                "UPDATE evidence SET last_seen=? WHERE last_seen=0", (time.time(),)
-            )
+            # Legacy rows have unknown age: do not promote them as freshly
+            # verified until a new inspection supplies current evidence.
         self.conn.executescript("""
             CREATE INDEX IF NOT EXISTS frontier_recheck
                 ON frontier(status, next_check, priority DESC);
@@ -417,7 +416,8 @@ class Frontier:
             return
         now = time.time()
         delay = (30 * 86400 if not error or error in
-                 {"access denied", "robots denied or unavailable"} else 86400)
+                 {"access denied", "robots denied or unavailable",
+                  "robots-access-denied"} else 86400)
         with self.conn:
             self.conn.execute(
                 ("UPDATE frontier SET status=?,error=?,last_checked=?,"
@@ -537,6 +537,7 @@ class WebCrawler:
         self.budget: RequestBudget = RequestBudget(config.max_requests, config.max_seconds)
         self.fetch: Callable[..., PageResponse] = fetch
         self._robots: dict[str, RobotFileParser | None] = {}
+        self._robots_failures: dict[str, str] = {}
         self._robots_lock: threading.Lock = threading.Lock()
         self._robots_guards: dict[str, threading.Lock] = {}
         self._last_host: dict[str, float] = {}
@@ -688,25 +689,44 @@ class WebCrawler:
         with self._robots_lock:
             guard = self._robots_guards.setdefault(host, threading.Lock())
         with guard:
+            if host in self._robots_failures:
+                return False
             if host not in self._robots:
                 robots_url = "https://" + host + "/robots.txt"
                 try:
                     response = self._request(robots_url, max_bytes=MAX_ROBOTS)
-                    if response.status in (401, 403, 429) or response.status >= 500:
+                    if response.status in (401, 403):
+                        self._robots_failures[host] = "robots-access-denied"
+                        return False
+                    if response.status == 429:
+                        self._robots_failures[host] = "robots-rate-limited"
+                        return False
+                    if response.status >= 500:
+                        self._robots_failures[host] = "robots-temporary-error"
                         return False
                     parser: RobotFileParser | None = None
                     if response.status == 200:
                         parser = RobotFileParser()
                         parser.parse(response.body.decode("utf-8", "replace").splitlines())
                         delay = parser.crawl_delay(AGENT)
+                        rate = parser.request_rate(AGENT)
+                        paced_delay = self.config.delay
                         if delay is not None:
-                            with self._host_lock:
-                                self._host_delay[host] = max(self.config.delay, min(float(delay), 60))
+                            paced_delay = max(paced_delay, float(delay))
+                        if rate is not None and rate.requests > 0:
+                            paced_delay = max(paced_delay, rate.seconds / rate.requests)
+                        if paced_delay > self.config.max_seconds:
+                            self._robots_failures[host] = "robots-pacing-exceeds-budget"
+                            return False
+                        with self._host_lock:
+                            self._host_delay[host] = paced_delay
                     elif response.status != 404:
+                        self._robots_failures[host] = "robots-unavailable"
                         return False
                     self._robots[host] = parser
                 except (OSError, ValueError, RuntimeError, http.client.HTTPException,
                         ssl.SSLError):
+                    self._robots_failures[host] = "robots-unavailable"
                     return False
             robots = self._robots[host]
         return robots is None or robots.can_fetch(AGENT, url)
@@ -714,7 +734,8 @@ class WebCrawler:
     def _inspect(self, page: CrawlPage) -> InspectedPage:
         host = urlsplit(page.url).hostname or ""
         if not self._allowed(page.url):
-            reason = "budget-exhausted" if not self.budget.remaining() else "robots denied or unavailable"
+            reason = ("budget-exhausted" if not self.budget.remaining()
+                      else self._robots_failures.get(host, "robots denied or unavailable"))
             return InspectedPage(page, "", (), (), (), (), reason)
         try:
             response = self._request(page.url)
@@ -777,6 +798,8 @@ class WebCrawler:
         page = data.page
         host = urlsplit(page.url).hostname or ""
         if data.error:
+            if data.error != "budget-exhausted" and page.url == "https://" + host + "/":
+                self.frontier.clear_homepage_evidence(host)
             self.frontier.complete(page, data.error)
             self.errors[data.error] += 1
             return
@@ -799,9 +822,12 @@ class WebCrawler:
                 method = "html-rendered"
                 self.browser_rendered += 1
         if categories and page.kind != "directory" and safe_hostname(host):
+            # Internal article pages must not masquerade as verified homepages.
+            repository = ("site-homepage" if page.url == "https://" + host + "/"
+                          else "site-internal-page")
             for category in categories:
                 self.frontier.evidence(Evidence(host, title or None, category, languages,
-                                               "site-homepage", None, "web-lead", method,
+                                               repository, None, "web-lead", method,
                                                origin=page.url))
         for loc in data.sitemap_paths:
             self.frontier.add(loc, depth=page.depth + 1,
