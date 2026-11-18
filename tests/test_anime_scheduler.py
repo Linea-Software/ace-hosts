@@ -381,3 +381,64 @@ def test_root_429_invalidates_previous_homepage_evidence(tmp_path: Path) -> None
         assert approved == set()
     finally:
         web.close()
+
+
+def test_due_rechecks_are_not_starved_by_new_hosts(tmp_path: Path) -> None:
+    frontier = Frontier(tmp_path / "fair-rechecks.sqlite")
+    try:
+        due_host = "old.example.org"
+        assert frontier.add(f"https://{due_host}/", depth=0,
+                            source="catalog", priority=20)
+        old = frontier.claim(1, 3)[0]
+        frontier.complete(old)
+        frontier.conn.execute(
+            "UPDATE frontier SET next_check=1 WHERE url=?", (old.url,)
+        )
+        for i in range(15):
+            assert frontier.add(f"https://new{i}.example.org/", depth=0,
+                                source="search", priority=80)
+        selected = [frontier.claim(1, 3)[0] for _ in range(4)]
+        assert old in selected
+        for page in selected:
+            frontier.complete(page)
+    finally:
+        frontier.close()
+
+
+def test_unicode_query_is_safe_http_request_target() -> None:
+    from ace_anime_discovery.anime_crawler import normalize_url
+
+    url = normalize_url(
+        "https://reader.example.org/search?chapter=漫画&lang=ja&utm_source=ignored"
+    )
+    assert url == (
+        "https://reader.example.org/search?chapter=%E6%BC%AB%E7%94%BB&lang=ja"
+    )
+    assert url.encode("ascii")
+
+
+def test_legacy_evidence_with_unknown_age_is_not_fresh(tmp_path: Path) -> None:
+    db = tmp_path / "old-evidence.sqlite"
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            CREATE TABLE evidence(
+                host TEXT NOT NULL, category TEXT NOT NULL, repository TEXT NOT NULL,
+                field TEXT NOT NULL, origin TEXT NOT NULL, payload TEXT NOT NULL,
+                PRIMARY KEY(host,category,repository,field,origin)
+            );
+        """)
+        conn.execute(
+            "INSERT INTO evidence VALUES(?,?,?,?,?,?)",
+            ("old.example.org", "manga", "site-homepage", "html-title-description",
+             "https://old.example.org/", "{}"),
+        )
+    migrated = Frontier(db)
+    try:
+        assert migrated.records() == []
+        migrated.evidence(Evidence(
+            "old.example.org", "Manga", "manga", (), "site-homepage",
+            None, "web-lead", "html-title-description", "https://old.example.org/"
+        ))
+        assert len(migrated.records()) == 1
+    finally:
+        migrated.close()

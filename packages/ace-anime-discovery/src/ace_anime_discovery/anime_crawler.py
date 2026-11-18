@@ -124,8 +124,15 @@ def normalize_url(raw: str) -> str | None:
         path = quote(unquote(value.path or "/"), safe="/:@!$&'()*+,;=-._~%")
         # Query strings may be used for navigation but are bounded; strip
         # common tracking parameters to collapse duplicate crawl URLs.
-        query = "&".join(p for p in value.query.split("&")
-                         if p and not p.lower().startswith(("utm_", "fbclid=", "gclid=")))[:240]
+        query_text = "&".join(
+            p for p in value.query.split("&")
+            if p and not p.lower().startswith(("utm_", "fbclid=", "gclid="))
+        )[:240]
+        query = quote(query_text, safe=":/?&=;+%@!$'()*,-._~")[:720]
+        # Never publish an incomplete percent escape after the byte cap.
+        last_escape = query.rfind("%")
+        if last_escape >= len(query) - 2:
+            query = query[:last_escape]
         return urlunsplit(("https", host, path, query, ""))
     except (ValueError, UnicodeError):
         return None
@@ -314,6 +321,7 @@ class Frontier:
         """)
         self.conn.execute("CREATE TEMP TABLE exhausted_hosts(host TEXT PRIMARY KEY)")
         self._claimed_per_host: Counter[str] = Counter()
+        self._claim_calls: int = 0
         self.conn.execute("UPDATE frontier SET status='pending' WHERE status='inflight'")
         self.conn.commit()
 
@@ -366,11 +374,10 @@ class Frontier:
             )
 
     def claim(self, limit: int, max_pages_domain: int) -> list[CrawlPage]:
-        """Prefer unvisited domains; retry due URLs without starving new leads.
-
-        Domain page budgets reset on each execution, not across all history.
-        """
+        """Fairly interleave new hosts and due rechecks, even at one worker."""
         now = time.time()
+        self._claim_calls += 1
+        due_first = self._claim_calls % 4 == 0
         rows = cast(list[tuple[str, str, int, str, str]], self.conn.execute("""
             WITH ready AS (
                 SELECT url, host, depth, source, kind, priority, status,
@@ -384,12 +391,22 @@ class Frontier:
                   AND (status='pending'
                    OR (status IN ('done','failed','deferred') AND
                        next_check > 0 AND next_check <= ?))
+            ), balanced AS (
+                SELECT url, host, depth, source, kind, priority, status,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY CASE WHEN status='pending' THEN 0 ELSE 1 END
+                        ORDER BY priority DESC, depth ASC, url ASC
+                    ) AS class_rank
+                FROM ready WHERE host_rank=1
             )
-            SELECT url, host, depth, source, kind FROM ready
-            WHERE host_rank=1
-            ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END,
+            SELECT url, host, depth, source, kind FROM balanced
+            ORDER BY CASE WHEN status='pending'
+                          THEN (class_rank-1)/3 ELSE class_rank-1 END,
+                     CASE WHEN ? = 1
+                          THEN CASE WHEN status='pending' THEN 1 ELSE 0 END
+                          ELSE CASE WHEN status='pending' THEN 0 ELSE 1 END END,
                      priority DESC, depth ASC, url ASC LIMIT ?
-        """, (now, max(100, limit * 10))).fetchall())
+        """, (now, int(due_first), max(100, limit * 10))).fetchall())
         chosen: list[CrawlPage] = []
         for url, host, depth, source, kind in rows:
             chosen.append(CrawlPage(url, depth, source, kind))
@@ -713,7 +730,10 @@ class WebCrawler:
                         paced_delay = self.config.delay
                         if delay is not None:
                             paced_delay = max(paced_delay, float(delay))
-                        if rate is not None and rate.requests > 0:
+                        if rate is not None:
+                            if rate.requests <= 0:
+                                self._robots_failures[host] = "robots-access-denied"
+                                return False
                             paced_delay = max(paced_delay, rate.seconds / rate.requests)
                         if paced_delay > self.config.max_seconds:
                             self._robots_failures[host] = "robots-pacing-exceeds-budget"
