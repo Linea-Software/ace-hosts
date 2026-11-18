@@ -36,10 +36,11 @@ TOPICS: dict[str, dict[str, str]] = {
 def search_queries(*, languages: tuple[str, ...] | None = None,
                    categories: tuple[str, ...] | None = None,
                    max_queries: int = 24,
+                   start_index: int = 0,
                    templates: dict[str, str] | None = None) -> Iterator[tuple[str, str]]:
     """Rotate language and category diagonally for diverse small-budget runs."""
-    if not 0 <= max_queries <= 300:
-        raise ValueError("invalid query budget")
+    if not 0 <= max_queries <= 300 or not 0 <= start_index <= 1_000_000_000:
+        raise ValueError("invalid query budget or cursor")
     languages = tuple(LANGUAGE_TERMS) if languages is None else languages
     categories = tuple(TOPICS) if categories is None else categories
     if not languages or not categories:
@@ -49,7 +50,8 @@ def search_queries(*, languages: tuple[str, ...] | None = None,
     if any(category not in TOPICS for category in categories):
         raise ValueError("unsupported category")
     templates = templates or {}
-    for i in range(max_queries):
+    for offset in range(max_queries):
+        i = start_index + offset
         lang = languages[i % len(languages)]
         category = categories[(i + i // len(languages)) % len(categories)]
         topic = TOPICS[category].get(lang, category.replace("-", " "))

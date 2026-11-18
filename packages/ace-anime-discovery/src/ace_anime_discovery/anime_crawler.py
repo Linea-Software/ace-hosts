@@ -222,7 +222,7 @@ class CrawlConfig:
     timeout: float = 6
     max_browser: int = 8
     max_search_queries: int = 24
-    max_seed_hosts: int = 90
+    max_seed_hosts: int = 1200
 
     def validate(self) -> None:
         if (not 1 <= self.max_requests <= 10_000 or
@@ -270,6 +270,45 @@ class Frontier:
                 PRIMARY KEY(host, category, repository, field, origin)
             );
         """)
+        # Upgrade existing GitHub Actions cache DBs without losing discovery leads.
+        schema_rows = cast(list[tuple[int, str, str, int, object, int]],
+                           self.conn.execute("PRAGMA table_info(frontier)").fetchall())
+        existing = {row[1] for row in schema_rows}
+        for name, kind in (
+            ("last_checked", "REAL NOT NULL DEFAULT 0"),
+            ("next_check", "REAL NOT NULL DEFAULT 0"),
+            ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if name not in existing:
+                self.conn.execute(f"ALTER TABLE frontier ADD COLUMN {name} {kind}")
+        self.conn.execute(
+            ("UPDATE frontier SET next_check=? WHERE status IN ('done','failed') "
+             + "AND next_check=0"), (time.time(),)
+        )
+        evidence_columns = {row[1] for row in cast(
+            list[tuple[int, str, str, int, object, int]],
+            self.conn.execute("PRAGMA table_info(evidence)").fetchall()
+        )}
+        if "last_seen" not in evidence_columns:
+            self.conn.execute(
+                "ALTER TABLE evidence ADD COLUMN last_seen REAL NOT NULL DEFAULT 0"
+            )
+            self.conn.execute(
+                "UPDATE evidence SET last_seen=? WHERE last_seen=0", (time.time(),)
+            )
+        self.conn.executescript("""
+            CREATE INDEX IF NOT EXISTS frontier_recheck
+                ON frontier(status, next_check, priority DESC);
+            CREATE TABLE IF NOT EXISTS domains (
+                host TEXT PRIMARY KEY, first_seen REAL NOT NULL,
+                last_seen REAL NOT NULL, last_verified REAL NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS run_state (
+                key TEXT PRIMARY KEY, value INTEGER NOT NULL
+            );
+        """)
+        self.conn.execute("CREATE TEMP TABLE exhausted_hosts(host TEXT PRIMARY KEY)")
+        self._claimed_per_host: Counter[str] = Counter()
         self.conn.execute("UPDATE frontier SET status='pending' WHERE status='inflight'")
         self.conn.commit()
 
@@ -290,6 +329,11 @@ class Frontier:
                 "INSERT OR IGNORE INTO frontier(url,host,depth,priority,source,kind) " +
                 "VALUES (?,?,?,?,?,?)", (normalized, host, depth, priority, source[:250], kind)
             )
+            self.conn.execute(
+                ("INSERT INTO domains(host,first_seen,last_seen) VALUES(?,?,?) "
+                 "ON CONFLICT(host) DO UPDATE SET last_seen=excluded.last_seen"),
+                (host, time.time(), time.time()),
+            )
         if cursor.rowcount == 0:
             self.duplicate_urls += 1
         return cursor.rowcount > 0
@@ -299,46 +343,91 @@ class Frontier:
             return
         with self.conn:
             self.conn.execute(
-                "INSERT OR IGNORE INTO evidence VALUES(?,?,?,?,?,?)",
+                ("INSERT INTO evidence VALUES(?,?,?,?,?,?,?) "
+                 + "ON CONFLICT(host,category,repository,field,origin) "
+                 + "DO UPDATE SET payload=excluded.payload,last_seen=excluded.last_seen"),
                 (entry.hostname, entry.category, entry.repository, entry.field,
-                 (entry.origin or "")[:500], json.dumps(asdict(entry), ensure_ascii=False)),
+                 (entry.origin or "")[:500], json.dumps(asdict(entry), ensure_ascii=False),
+                 time.time()),
+            )
+
+    def clear_homepage_evidence(self, host: str) -> None:
+        """Successful rechecks replace old homepage classifications."""
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM evidence WHERE host=? AND repository='site-homepage'",
+                (host,),
             )
 
     def claim(self, limit: int, max_pages_domain: int) -> list[CrawlPage]:
-        rows = cast(list[tuple[str, str, int, str, str]], self.conn.execute(
-            "SELECT url,host,depth,source,kind FROM frontier WHERE status='pending' " +
-            "ORDER BY priority DESC, depth ASC, url ASC LIMIT 300"
-        ).fetchall())
+        """Prefer unvisited domains; retry due URLs without starving new leads.
+
+        Domain page budgets reset on each execution, not across all history.
+        """
+        now = time.time()
+        rows = cast(list[tuple[str, str, int, str, str]], self.conn.execute("""
+            WITH ready AS (
+                SELECT url, host, depth, source, kind, priority, status,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY host
+                        ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END,
+                                 priority DESC, depth ASC, url ASC
+                    ) AS host_rank
+                FROM frontier
+                WHERE host NOT IN (SELECT host FROM exhausted_hosts)
+                  AND (status='pending'
+                   OR (status IN ('done','failed','deferred') AND
+                       next_check > 0 AND next_check <= ?))
+            )
+            SELECT url, host, depth, source, kind FROM ready
+            WHERE host_rank=1
+            ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END,
+                     priority DESC, depth ASC, url ASC LIMIT ?
+        """, (now, max(100, limit * 10))).fetchall())
         chosen: list[CrawlPage] = []
-        busy: set[str] = set()
         for url, host, depth, source, kind in rows:
-            if host in busy:
-                continue
-            count = cast(int, self.conn.execute(
-                "SELECT COUNT(*) FROM frontier WHERE host=? AND status IN ('done','inflight','failed')",
-                (host,)
-            ).fetchone()[0])
-            if count >= max_pages_domain:
-                self.conn.execute("UPDATE frontier SET status='skipped',error='per-host page budget' WHERE url=?",
-                                  (url,))
-                continue
             chosen.append(CrawlPage(url, depth, source, kind))
-            busy.add(host)
-            self.conn.execute("UPDATE frontier SET status='inflight' WHERE url=?", (url,))
+            self._claimed_per_host[host] += 1
+            if self._claimed_per_host[host] >= max_pages_domain:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO exhausted_hosts(host) VALUES(?)", (host,)
+                )
+            self.conn.execute(
+                "UPDATE frontier SET status='inflight' WHERE url=?", (url,)
+            )
             if len(chosen) >= limit:
                 break
         self.conn.commit()
         return chosen
 
     def complete(self, page: CrawlPage, error: str = "") -> None:
-        status = "pending" if error == "budget-exhausted" else "failed" if error else "done"
+        if error == "budget-exhausted":
+            with self.conn:
+                self.conn.execute(
+                    "UPDATE frontier SET status='pending',error='' WHERE url=?",
+                    (page.url,),
+                )
+            return
+        now = time.time()
+        delay = (30 * 86400 if not error or error in
+                 {"access denied", "robots denied or unavailable"} else 86400)
         with self.conn:
-            self.conn.execute("UPDATE frontier SET status=?,error=? WHERE url=?",
-                              (status, error[:240], page.url))
+            self.conn.execute(
+                ("UPDATE frontier SET status=?,error=?,last_checked=?,"
+                 + "next_check=?,attempts=attempts+1 WHERE url=?"),
+                ("failed" if error else "done", error[:240], now,
+                 now + delay, page.url),
+            )
+            if not error:
+                self.conn.execute(
+                    "UPDATE domains SET last_verified=? WHERE host=?",
+                    (now, urlsplit(page.url).hostname or ""),
+                )
 
     def records(self) -> list[Evidence]:
         rows = cast(list[tuple[str]], self.conn.execute(
-            "SELECT payload FROM evidence ORDER BY host,category").fetchall())
+            "SELECT payload FROM evidence WHERE last_seen >= ? ORDER BY host,category",
+            (time.time() - 180 * 86400,)).fetchall())
         result: list[Evidence] = []
         for (payload,) in rows:
             data = cast(dict[str, object], json.loads(payload))
@@ -352,6 +441,26 @@ class Frontier:
                 origin=cast(str | None, data.get("origin")),
             ))
         return result
+
+    def search_cursor(self) -> int:
+        row = cast(tuple[int] | None, self.conn.execute(
+            "SELECT value FROM run_state WHERE key='search_cursor'"
+        ).fetchone())
+        return int(row[0]) if row else 0
+
+    def advance_search_cursor(self, count: int) -> None:
+        with self.conn:
+            self.conn.execute(
+                ("INSERT INTO run_state(key,value) VALUES('search_cursor',?) "
+                 + "ON CONFLICT(key) DO UPDATE SET value=value+excluded.value"),
+                (count,),
+            )
+
+    def seen_hosts(self) -> set[str]:
+        return {row[0] for row in cast(
+            list[tuple[str]],
+            self.conn.execute("SELECT DISTINCT host FROM frontier").fetchall()
+        )}
 
     def statistics(self) -> dict[str, object]:
         statuses = dict(cast(list[tuple[str, int]], self.conn.execute(
@@ -409,16 +518,30 @@ class WebCrawler:
     def seed(self, records: list[Evidence], *, directories: tuple[str, ...] = (),
              with_public_indexes: bool = True) -> None:
         for url in ((PUBLIC_INDEXES if with_public_indexes else ()) + directories):
-            self.frontier.add(url, depth=0, source="public-index", kind="directory", priority=100)
-        seen: set[str] = set()
-        for evidence in records:
-            if len(seen) >= self.config.max_seed_hosts:
+            self.frontier.add(url, depth=0, source="public-index",
+                              kind="directory", priority=100)
+        families: dict[str, set[str]] = {}
+        for entry in records:
+            if safe_hostname(entry.hostname):
+                families.setdefault(entry.hostname, set()).add(entry.family)
+        # Previous runs should not monopolize a small per-run seed allowance.
+        seen = self.frontier.seen_hosts()
+        candidates = sorted(families, key=lambda host: (
+            host in seen,
+            -len(families[host] - {"derived", "web-lead"}),
+            host,
+        ))
+        selected = 0
+        for host in candidates:
+            if host in seen:
+                continue  # A previously queued URL retains its own retry TTL.
+            if self.frontier.add(
+                "https://" + host + "/", depth=0, source="catalog",
+                priority=45 if len(families[host] - {"derived", "web-lead"}) >= 2 else 35,
+            ):
+                selected += 1
+            if selected >= self.config.max_seed_hosts:
                 break
-            host = evidence.hostname
-            if host not in seen and safe_hostname(host):
-                seen.add(host)
-                self.frontier.add("https://" + host + "/", depth=0,
-                                  source="catalog:" + evidence.repository, priority=35)
 
     def _request(self, url: str, *, max_bytes: int = MAX_HTML,
                  headers: dict[str, str] | None = None) -> PageResponse:
@@ -454,10 +577,13 @@ class WebCrawler:
                templates: dict[str, str] | None = None) -> None:
         if not token or self.config.max_search_queries == 0:
             return
-        for lang, query in search_queries(max_queries=self.config.max_search_queries,
-                                          templates=templates):
+        for lang, query in search_queries(
+            max_queries=self.config.max_search_queries,
+            start_index=self.frontier.search_cursor(), templates=templates,
+        ):
             if not self.budget.remaining():
                 break
+            self.frontier.advance_search_cursor(1)
             url = ("https://api.search.brave.com/res/v1/web/search?q="
                    + quote(query, safe="") + "&count=20")
             try:
@@ -465,6 +591,8 @@ class WebCrawler:
                                        headers={"X-Subscription-Token": token, "Accept": "application/json"})
                 if result.status != 200:
                     self.errors[f"search-http-{result.status}"] += 1
+                    if result.status in (401, 403, 429):
+                        break  # Do not evade authentication or API rate limits.
                     continue
                 for address, title in parse_brave_results(cast(object, json.loads(result.body))):
                     host = normalize_hostname(address)
@@ -563,6 +691,8 @@ class WebCrawler:
         if data.error:
             self.errors[data.error] += 1
             return
+        if page.url == "https://" + host + "/":
+            self.frontier.clear_homepage_evidence(host)
         categories = data.categories
         languages = data.languages
         title = data.title
