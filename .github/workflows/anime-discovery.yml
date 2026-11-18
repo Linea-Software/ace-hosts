@@ -40,10 +40,10 @@ jobs:
       # Chromium stays opt-in: the browser renderer cannot pin resolved IPs.
       # Static HTTPS crawling retains DNS pinning, robots and per-host pacing.
       - name: Restore incremental crawler state
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: downloads/anime-discovery/crawl-state.sqlite*
-          key: ${{ runner.os }}-anime-crawl-${{ github.run_id }}
+          key: ${{ runner.os }}-anime-crawl-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ${{ runner.os }}-anime-crawl-
       - name: Fetch curated and discovery-only sources
@@ -63,6 +63,20 @@ jobs:
             --crawl-depth "$CRAWL_DEPTH" --crawl-workers 12 \
             --crawl-seed-hosts 1400 --crawl-joined-hosts 1800 \
             --crawl-pages-per-domain 3 --crawl-search-queries 24
+      - name: Checkpoint persistent discovery state
+        if: always()
+        id: crawler_state
+        run: |
+          if [ -f downloads/anime-discovery/crawl-state.sqlite ]; then
+            uv run python -c 'import sqlite3; db=sqlite3.connect("downloads/anime-discovery/crawl-state.sqlite"); db.execute("PRAGMA wal_checkpoint(TRUNCATE)"); db.close()'
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Save incremental crawler state
+        if: always() && steps.crawler_state.outputs.exists == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: downloads/anime-discovery/crawl-state.sqlite*
+          key: ${{ runner.os }}-anime-crawl-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Propose new sites for human review
         run: uv run ace-anime-propose --max-new 200
       - name: Validate the proposed anime/manga list and tests

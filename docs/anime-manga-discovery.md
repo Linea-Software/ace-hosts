@@ -205,8 +205,16 @@ It does not scrape search-results pages.
 DNS resolution accepts public IP addresses only.
 HTTP connects to a checked, fixed IP address and verifies TLS for the original hostname.
 The crawler does not follow redirects or connect to private IP targets.
-It follows robots.txt, per-host request intervals, response byte limits, and explicit work budgets.
-It retries transient 5xx responses and timeouts.
+It follows robots.txt including the full Crawl-delay and Request-rate intervals,
+per-host request spacing, response byte limits, and explicit work budgets.
+A robots.txt 401, 403, 429 or server failure is cached as denied for the rest of
+the run; rate-limit/temporary failures are rechecked conservatively.
+It retries transient 5xx responses and timeouts, never access-control failures.
+Due rechecks receive a fair share of requests even if new leads keep arriving.
+Only verified domain-root pages provide site-homepage evidence: topical articles
+on unrelated sites are not sufficient. A failed root recheck invalidates its
+old verification evidence, and legacy evidence with unknown age is not treated
+as freshly verified. Unicode query parameters are UTF-8 percent-encoded.
 
 Browser rendering stays on the same origin and has limits. CI runs only
 HTTP crawling: the browser fallback does not pin DNS to a previously checked
@@ -228,7 +236,9 @@ free standard runners for the public repository. Each hosted job is also
 subject to GitHub's six-hour maximum.
 
 SQLite saves the URL list between jobs.
-GitHub Actions restores the cache automatically.
+GitHub Actions restores the latest cache and uses a separate immutable key
+per run attempt, checkpointing WAL and saving state immediately after discovery.
+This preserves resumed progress even if later review/validation steps fail.
 Thus, each scheduled run continues earlier discovery work.
 
 ## Manual review and exceptions
