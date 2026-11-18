@@ -1,0 +1,32 @@
+# ace-anime-discovery
+
+Independent Python distribution for evidence-led anime, manga, manhwa, manhua, webtoon and novel website discovery. The distribution lives in the ace-hosts uv workspace, but its runtime modules, CLI and domain/file helpers do not import ace-hosts internals.
+
+## CLI
+
+From the `ace-hosts` repository root:
+
+```sh
+uv sync --locked
+uv run ace-anime-discover --refresh --crawl-web \
+  --crawl-requests 8000 --crawl-seconds 4500 --crawl-workers 12 \
+  --crawl-seed-hosts 1400 --crawl-joined-hosts 1800
+uv run ace-anime-propose --max-new 200
+```
+
+Discovery requires the currently downloaded anime/manga catalogs and joined input produced by `ace-hosts`. Paths can be overridden with CLI arguments. If invoked outside that directory, set `ACE_HOSTS_ROOT` or pass absolute paths for each input/output. The original `scripts/anime_*.py` import paths and discovery/proposal CLI scripts remain supported for compatibility.
+
+## Design
+
+- Independent extension catalogs and optional official Brave Search API supply leads. Brave queries rotate through category/language combinations using a persistent cursor. An API key is optional and may incur separate provider costs.
+- A persistent SQLite frontier interleaves hosts rather than repeatedly processing hundreds of links from one site. It checkpoints work, expires evidence, handles failed requests conservatively, schedules monthly rechecks and upgrades legacy state databases.
+- The unreviewed `newedgex-joined.txt` file is sampled via a persistent cursor. The joined-list cursor resets on upstream SHA-256 changes while preserving deduplicated hosts. A joined-only domain is **not** an independent catalog confirmation and is never exported to a published blocklist on that basis alone.
+- HTTP requests require public DNS answers, pinned IP addresses, verified TLS, HTTPS, robots permission, body limits, per-host spacing and bounded global requests/time. 401/403/429 are not bypassed or retried.
+- Playwright remains an opt-in fallback. It restricts page requests to the same host, but **does not enforce DNS pinning**; hosted CI therefore does not enable it.
+- `candidates.jsonl` and review artifacts contain untrusted leads. Only a human-reviewed merge of `seeds/anime-manga.txt` affects published `ace-hosts` site packs.
+
+## GitHub Actions
+
+For the public repository, standard hosted runner minutes are not billed, although GitHub limits a single job to six hours. The discovery workflow runs twice weekly with a 75-minute crawl deadline (4,500 seconds), 8,000 HTTP requests and a 145-minute job timeout (including headroom for manually configured two-hour crawls). Counts are upper bounds, not throughput guarantees. It uses 12 workers with per-host delays; no scraping of search results pages or bypass of access controls.
+
+Run `uv run pytest`, `uv run basedpyright`, and `uv lock --check` in the ace-hosts workspace before changes.

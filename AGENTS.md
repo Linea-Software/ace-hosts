@@ -105,6 +105,7 @@ Their entry points call `scripts.*:main`.
 - **Atomic writes:** Write generated text through `utils.atomic_write_lines`.
   Stage downloads before you call `os.replace`.
 - **Generated files:** Do not edit or commit generated `hosts/*` or `downloads/*` files.
+- **Anime discovery package:** The crawler, catalog adapters and review CLI live in `packages/ace-anime-discovery/src/ace_anime_discovery`. Compatibility aliases in `scripts/anime_*.py` preserve existing import paths.
 - **Source metadata:** Keep built-in categories, URLs, and license labels in `scripts/source_catalog.py`.
   Do not distribute this metadata across CLI modules.
 - **Memory use:** Read source files one line at a time.

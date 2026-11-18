@@ -1,5 +1,10 @@
 # Anime/Manga discovery and review
 
+The independent uv workspace package `packages/ace-anime-discovery` owns
+the crawler and discovery/review CLIs. Legacy `scripts/anime_*.py` imports
+and scripts remain available for backwards compatibility.
+
+
 ACE Hosts publishes one Anime/Manga site pack: **pack-anime-manga-pro → anime-manga.txt**.
 The pack combines UT1 manga, newedgex refined, and the reviewed entries in `seeds/anime-manga.txt`.
 Anime Discovery proposes additions to this seed in a pull request (PR).
@@ -14,7 +19,7 @@ The process also excludes shared infrastructure.
 
 ## Upstream catalogs and adapter formats
 
-The independent parser functions in scripts/anime_discovery.py read only declared site-home URLs.
+The independent parser functions in ace_anime_discovery.anime_discovery read only declared site-home URLs.
 They do not collect arbitrary URLs from extension source code, icons, authentication endpoints, APIs, or CDNs.
 
 | Upstream | Explicit input and field | License / caveat |
@@ -52,10 +57,13 @@ If a source does not give a specific category, the pipeline uses a reader-specif
    It uses regular upstream sources and reviewed seeds.
    It excludes joined-only candidates, exact-host exceptions, and shared infrastructure.
 
-3. **Discover candidates.** scripts/anime_discovery.py uses the existing limited catalog parsers and site inspections.
-   The `--crawl-web` option also starts scripts/anime_crawler.py.
+3. **Discover candidates.** ace_anime_discovery.anime_discovery uses the existing limited catalog parsers and site inspections.
+   The `--crawl-web` option also starts ace_anime_discovery.anime_crawler.
    The crawler uses a persistent SQLite URL list with priority order.
    Public indexes, permitted user-specified directories, optional Brave Search API results, and original catalogs supply starting URLs.
+   The crawler also schedules previously unseen catalog hosts before old leads
+and rotates through the unreviewed joined-domain list between runs. Joined
+entries are only weak discovery leads, never independent catalog votes.
    The crawler gives priority to relevant links, including links to unknown external hosts.
    It follows links recursively to the configured maximum depth.
    It examines homepage metadata, body text, language, and limited same-origin sitemap paths.
@@ -89,7 +97,7 @@ If a source does not give a specific category, the pipeline uses a reader-specif
    `crawl-report.json` and `crawl-report.md` record visited URLs, discoveries, sources, category and language distributions, errors, and remaining budgets.
    Do not publish these intermediate files directly.
 
-6. **Propose approved evidence for review.** scripts/propose_anime_sites.py creates **one review PR** for `seeds/anime-manga.txt`.
+6. **Propose approved evidence for review.** ace_anime_discovery.propose_anime_sites creates **one review PR** for `seeds/anime-manga.txt`.
    A candidate qualifies through two independent catalog families.
    It also qualifies through one catalog, joined, and an inspected homepage or sitemap.
    Independent web leads qualify when inspected website metadata confirms the subject.
@@ -97,7 +105,8 @@ If a source does not give a specific category, the pipeline uses a reader-specif
    The English PR table shows content categories, languages, discovery sources, verification methods, evidence, status, and score.
    A person must review the changes.
    The maintainer can remove false positives before merging.
-   Propose no more than 100 new candidates in one run.
+   The hosted workflow proposes up to 200 new candidates per run (the CLI
+allows up to 250); the remainder stay available as review artifacts.
 
 7. **Publish reviewed data.** Each month, the release job merges reviewed seeds from main into the Pro file.
    It validates output, exceptions, and approved-source provenance.
@@ -106,10 +115,10 @@ If a source does not give a specific category, the pipeline uses a reader-specif
    The pipeline uses raw joined data only to check source integrity.
    It never merges the joined dataset as a blocklist.
 
-## Weekly discovery and monthly release
+## Twice-weekly discovery and monthly release
 
-The weekly workflow is `.github/workflows/anime-discovery.yml`.
-It runs each Wednesday at 04:30 UTC.
+The twice-weekly workflow is `.github/workflows/anime-discovery.yml`.
+It runs each Wednesday and Saturday at 04:30 UTC.
 You can also start it manually in GitHub Actions.
 
 The workflow restores an incremental SQLite cache.
@@ -154,9 +163,9 @@ Run these commands from the ace-hosts repository root:
 ~~~bash
 uv run python scripts/download_sources.py --category anime-manga
 uv run python scripts/merge_hosts.py --category anime-manga --no-progress
-uv run playwright install chromium  # once, on local development machines
-uv run python scripts/anime_discovery.py --refresh --scrape-sites --browser-fallback --crawl-web --crawl-requests 220 --crawl-seconds 600 --crawl-depth 3 --crawl-workers 4 --max-scrape-sites 60 --max-browser-sites 15
-uv run python scripts/propose_anime_sites.py  # changes reviewed seed; commit only via PR
+uv run playwright install chromium  # optional; local browser fallback only
+uv run ace-anime-discover --refresh --crawl-web --crawl-requests 8000 --crawl-seconds 4500 --crawl-depth 3 --crawl-workers 12 --crawl-seed-hosts 1400 --crawl-joined-hosts 1800
+uv run ace-anime-propose --max-new 200  # changes reviewed seed; commit only via PR
 uv run python scripts/validate_category_outputs.py
 uv run python scripts/build_site_packs.py --pack pack-anime-manga-pro
 uv run pytest -q
@@ -179,7 +188,7 @@ You can limit requests, elapsed time, depth, concurrent work, and pages per doma
 Use `--crawl-directory-url https://...` to add a directory URL.
 You can repeat this option.
 
-The public directory starting points are in scripts/anime_crawler.py.
+The public directory starting points are in ace_anime_discovery.anime_crawler.
 Use `--no-crawl-public-indexes` to disable them.
 The crawler supports all 15 required language families.
 This includes search terms for Simplified and Traditional Chinese.
@@ -199,16 +208,28 @@ The crawler does not follow redirects or connect to private IP targets.
 It follows robots.txt, per-host request intervals, response byte limits, and explicit work budgets.
 It retries transient 5xx responses and timeouts.
 
-Browser rendering stays on the same origin and has limits.
+Browser rendering stays on the same origin and has limits. CI runs only
+HTTP crawling: the browser fallback does not pin DNS to a previously checked
+public IP and therefore remains an explicit opt-in for trusted networks.
+
 **Chrome DNS pinning is not implemented.**
 Do not use browser fallback on deployment networks that require this protection.
 The crawler does not log in, solve CAPTCHAs, evade rate limits, or scrape restricted content.
 Do not accept pages that robots.txt, HTTP access rules, or errors prohibit.
 Treat an HTTP 404 response for robots.txt as no restriction.
 
+The frontier persists URL statuses, last-check and next-check dates, domain
+timestamps, evidence, an input-file checksum and independent cursors for joined-list samples and
+multilingual search. Failures use a one-day retry delay, while denied sites
+and successful inspections are not revisited for 30 days. The worker budget
+resets for each run. GitHub uses a 145-minute job timeout (to support manually configured 120-minute crawls) and a 75-minute
+crawl deadline with a hard upper bound of 8,000 HTTP requests, running on
+free standard runners for the public repository. Each hosted job is also
+subject to GitHub's six-hour maximum.
+
 SQLite saves the URL list between jobs.
 GitHub Actions restores the cache automatically.
-Thus, each weekly run continues earlier discovery work.
+Thus, each scheduled run continues earlier discovery work.
 
 ## Manual review and exceptions
 
