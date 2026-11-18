@@ -40,7 +40,7 @@ jobs:
       # Chromium stays opt-in: the browser renderer cannot pin resolved IPs.
       # Static HTTPS crawling retains DNS pinning, robots and per-host pacing.
       - name: Restore incremental crawler state
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: downloads/anime-discovery/crawl-state.sqlite*
           key: ${{ runner.os }}-anime-crawl-${{ github.run_id }}-${{ github.run_attempt }}
@@ -73,7 +73,7 @@ jobs:
           fi
       - name: Save incremental crawler state
         if: always() && steps.crawler_state.outputs.exists == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: downloads/anime-discovery/crawl-state.sqlite*
           key: ${{ runner.os }}-anime-crawl-${{ github.run_id }}-${{ github.run_attempt }}
@@ -86,7 +86,7 @@ jobs:
           uv run basedpyright
       - name: Publish complete review artifacts
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: anime-manga-discovery-review
           path: |

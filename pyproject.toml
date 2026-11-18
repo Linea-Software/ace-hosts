@@ -20,11 +20,11 @@ classifiers = [
 # dependencies are resolved and locked deterministically in uv.lock.
 dependencies = [
     "ace-anime-discovery==0.1.0",
-    "playwright==1.64.1",
+    "playwright==1.65.1",
     "python-dotenv==1.2.4",
     "requests==2.34.2",
     "tqdm==4.70.1",
-    "xxhash==4.0.2",
+    "xxhash==4.1.0",
 ]
 
 [project.scripts]
