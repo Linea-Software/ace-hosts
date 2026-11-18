@@ -66,7 +66,7 @@ def propose_sites(
             joined = row.get("joined") is True
             web_sources = row.get("repositories", [])
             web_lead = (isinstance(web_sources, list) and
-                        bool({"web-link", "web-directory", "brave-search", "site-outbound"}
+                        bool({"web-link", "web-directory", "brave-search", "site-outbound", "joined-candidate"}
                              & set(cast(list[str], web_sources))))
             website_verified = (row.get("verification_method") == "website-metadata"
                                 and row.get("review_eligible") is True

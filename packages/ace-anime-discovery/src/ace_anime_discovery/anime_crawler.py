@@ -20,7 +20,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from html.parser import HTMLParser
@@ -223,6 +223,7 @@ class CrawlConfig:
     max_browser: int = 8
     max_search_queries: int = 24
     max_seed_hosts: int = 1200
+    max_joined_hosts: int = 1500
 
     def validate(self) -> None:
         if (not 1 <= self.max_requests <= 10_000 or
@@ -234,7 +235,8 @@ class CrawlConfig:
                 not 1 <= self.timeout <= 30 or
                 not 0 <= self.max_browser <= 30 or
                 not 0 <= self.max_search_queries <= 300 or
-                not 0 <= self.max_seed_hosts <= 10_000):
+                not 0 <= self.max_seed_hosts <= 10_000 or
+                not 0 <= self.max_joined_hosts <= 10_000):
             raise ValueError("invalid bounded crawler configuration")
 
 
@@ -442,6 +444,20 @@ class Frontier:
             ))
         return result
 
+    def joined_cursor(self) -> int:
+        row = cast(tuple[int] | None, self.conn.execute(
+            "SELECT value FROM run_state WHERE key='joined_cursor'"
+        ).fetchone())
+        return row[0] if row else 0
+
+    def set_joined_cursor(self, value: int) -> None:
+        with self.conn:
+            self.conn.execute(
+                ("INSERT INTO run_state(key,value) VALUES('joined_cursor',?) "
+                 + "ON CONFLICT(key) DO UPDATE SET value=excluded.value"),
+                (value,),
+            )
+
     def search_cursor(self) -> int:
         row = cast(tuple[int] | None, self.conn.execute(
             "SELECT value FROM run_state WHERE key='search_cursor'"
@@ -516,13 +532,14 @@ class WebCrawler:
         self.frontier.close()
 
     def seed(self, records: list[Evidence], *, directories: tuple[str, ...] = (),
-             with_public_indexes: bool = True) -> None:
+             with_public_indexes: bool = True,
+             skip_hosts: Collection[str] = ()) -> None:
         for url in ((PUBLIC_INDEXES if with_public_indexes else ()) + directories):
             self.frontier.add(url, depth=0, source="public-index",
                               kind="directory", priority=100)
         families: dict[str, set[str]] = {}
         for entry in records:
-            if safe_hostname(entry.hostname):
+            if safe_hostname(entry.hostname) and entry.hostname not in skip_hosts:
                 families.setdefault(entry.hostname, set()).add(entry.family)
         # Previous runs should not monopolize a small per-run seed allowance.
         seen = self.frontier.seen_hosts()
@@ -542,6 +559,40 @@ class WebCrawler:
                 selected += 1
             if selected >= self.config.max_seed_hosts:
                 break
+
+    def seed_joined(self, hosts: Iterable[str], *,
+                    skip_hosts: Collection[str] = ()) -> None:
+        """Incrementally inspect untrusted community domains over many runs.
+
+        Joined-list evidence never counts as an independent catalog or
+        authorizes publication. The cursor advances only past examined rows.
+        """
+        if self.config.max_joined_hosts == 0:
+            return
+        offset = self.frontier.joined_cursor()
+        previously_seen = self.frontier.seen_hosts()
+        selected = 0
+        consumed = offset
+        exhausted = True
+        for i, hostname in enumerate(hosts):
+            if i < offset:
+                continue
+            consumed = i + 1
+            host = normalize_hostname(hostname)
+            if (host and host not in skip_hosts and host not in previously_seen
+                    and safe_hostname(host)):
+                if self.frontier.add("https://" + host + "/", depth=0,
+                                     source="joined-candidate", priority=10):
+                    self.frontier.evidence(Evidence(
+                        host, None, "unknown", (), "joined-candidate", None,
+                        "web-lead", "domain", origin="newedgex-joined",
+                    ))
+                    selected += 1
+            if selected >= self.config.max_joined_hosts:
+                exhausted = False
+                break
+        self.frontier.set_joined_cursor(0 if exhausted else consumed)
+        logger.info("joined backlog: queued %d unverified hosts", selected)
 
     def _request(self, url: str, *, max_bytes: int = MAX_HTML,
                  headers: dict[str, str] | None = None) -> PageResponse:
@@ -770,11 +821,15 @@ class WebCrawler:
 def crawl_web(records: list[Evidence], config: CrawlConfig, *,
               directories: tuple[str, ...] = (), public_indexes: bool = True,
               search_token: str | None = None,
-              search_templates: dict[str, str] | None = None
+              search_templates: dict[str, str] | None = None,
+              joined_hosts: Iterable[str] = (),
+              skip_hosts: Collection[str] = (),
               ) -> tuple[list[Evidence], dict[str, object]]:
     crawler = WebCrawler(config)
     try:
-        crawler.seed(records, directories=directories, with_public_indexes=public_indexes)
+        crawler.seed(records, directories=directories, with_public_indexes=public_indexes,
+                     skip_hosts=skip_hosts)
+        crawler.seed_joined(joined_hosts, skip_hosts=skip_hosts)
         crawler.search(search_token, templates=search_templates)
         stats = crawler.run()
         return crawler.frontier.records(), stats

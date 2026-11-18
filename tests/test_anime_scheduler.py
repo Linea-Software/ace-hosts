@@ -117,3 +117,54 @@ def test_rechecking_homepage_replaces_stale_evidence(tmp_path: Path) -> None:
         assert frontier.records() == []
     finally:
         frontier.close()
+
+
+def test_joined_backlog_rotates_and_is_not_published(tmp_path: Path) -> None:
+    from ace_anime_discovery.anime_discovery import classify
+
+    hosts = [f"joined{i}.example.org" for i in range(6)]
+    path = tmp_path / "joined.sqlite"
+    config = CrawlConfig(path, max_seed_hosts=0, max_joined_hosts=2,
+                         max_browser=0)
+    first = WebCrawler(config)
+    try:
+        first.seed_joined(hosts)
+        assert first.frontier.joined_cursor() == 2
+        assert len(first.frontier.seen_hosts()) == 2
+        evidence = first.frontier.records()
+        assert all(row.repository == "joined-candidate" for row in evidence)
+        rows, approved = classify(evidence, set(hosts), set(), set(), set())
+        assert len(rows) == 2
+        assert approved == set()
+        assert all(row["review_eligible"] is False for row in rows)
+    finally:
+        first.close()
+
+    second = WebCrawler(config)
+    try:
+        second.seed_joined(hosts)
+        assert second.frontier.joined_cursor() == 4
+        assert len(second.frontier.seen_hosts()) == 4
+    finally:
+        second.close()
+
+
+def test_joined_site_needs_homepage_evidence_for_review(tmp_path: Path) -> None:
+    from ace_anime_discovery.anime_discovery import classify
+
+    crawl = WebCrawler(CrawlConfig(tmp_path / "verified.sqlite",
+                                   max_joined_hosts=1, max_browser=0))
+    try:
+        crawl.seed_joined(["mangareader.example.org"])
+        crawl.frontier.evidence(Evidence(
+            "mangareader.example.org", "Manga Reader", "manga", ("it",),
+            "site-homepage", None, "web-lead", "html-title-description",
+            "https://mangareader.example.org/"
+        ))
+        ledger, approved = classify(crawl.frontier.records(),
+                                    {"mangareader.example.org"}, set(), set(), set())
+        assert ledger[0]["status"] == "website-verified"
+        assert ledger[0]["review_eligible"] is True
+        assert approved == set()
+    finally:
+        crawl.close()

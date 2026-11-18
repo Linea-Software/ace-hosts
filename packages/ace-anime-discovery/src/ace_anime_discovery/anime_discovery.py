@@ -669,7 +669,7 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
                        and record.category in CONTENT_TYPES}
         web_leads = {record.repository for record in evidence
                      if record.repository in {"web-link", "web-directory", "brave-search",
-                                              "site-outbound"}}
+                                              "site-outbound", "joined-candidate"}}
         website_verified = bool(site_checks and web_leads)
         confirmed = len(families) >= MIN_INDEPENDENT_FAMILIES
         trusted = host in pro or host in allowed or confirmed
@@ -684,7 +684,7 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
         ledger.append({
             "hostname": host,
             "names": sorted({v.name for v in evidence if v.name}),
-            "categories": sorted({v.category for v in evidence}),
+            "categories": sorted({v.category for v in evidence if v.category in CONTENT_TYPES}),
             "languages": sorted({language for v in evidence for language in v.languages}),
             "repositories": sorted({v.repository for v in evidence}),
             "discovery_sources": sorted({v.origin for v in evidence if v.origin})[:15],
@@ -889,6 +889,9 @@ class DiscoveryArgs(argparse.Namespace):
     crawl_depth: int = 3
     crawl_workers: int = 4
     crawl_pages_per_domain: int = 3
+    crawl_seed_hosts: int = 1200
+    crawl_joined_hosts: int = 1500
+    crawl_search_queries: int = 24
     crawl_state: Path = utils.PROJECT_ROOT / "downloads" / "anime-discovery" / "crawl-state.sqlite"
     crawl_query_templates: Path | None = None
     crawl_directory_url: list[str] | None = None
@@ -927,6 +930,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--crawl-depth", type=int, default=3)
     parser.add_argument("--crawl-workers", type=int, default=4)
     parser.add_argument("--crawl-pages-per-domain", type=int, default=3)
+    parser.add_argument("--crawl-seed-hosts", type=int, default=1200)
+    parser.add_argument("--crawl-joined-hosts", type=int, default=1500,
+                        help="Unreviewed joined domains sampled per run (0 to disable)")
+    parser.add_argument("--crawl-search-queries", type=int, default=24,
+                        help="Official Brave API calls per run (requires API key)")
     parser.add_argument("--crawl-state", type=Path, default=DiscoveryArgs.crawl_state)
     parser.add_argument("--crawl-directory-url", action="append", default=[])
     parser.add_argument("--crawl-query-templates", type=Path,
@@ -1008,11 +1016,23 @@ def main(argv: list[str] | None = None) -> int:
                     concurrency=args.crawl_workers,
                     max_pages_domain=args.crawl_pages_per_domain,
                     max_browser=args.max_browser_sites if args.browser_fallback else 0,
+                    max_seed_hosts=args.crawl_seed_hosts,
+                    max_joined_hosts=args.crawl_joined_hosts,
+                    max_search_queries=args.crawl_search_queries,
                 ),
                 directories=tuple(args.crawl_directory_url or []),
                 public_indexes=args.crawl_public_indexes,
                 search_token=os.environ.get("ACE_DISCOVERY_BRAVE_API_KEY"),
                 search_templates=templates,
+                joined_hosts=utils.iter_domains(
+                    args.downloads_dir / "anime-manga" / "newedgex-joined.txt"
+                ) if (args.downloads_dir / "anime-manga" / "newedgex-joined.txt").is_file() else (),
+                skip_hosts=(
+                    _load_hostnames(args.hosts_dir / "anime-manga.txt")
+                    | _load_hostnames(args.approved_file)
+                    | _load_hostnames(args.whitelist)
+                    | _load_hostnames(args.exceptions)
+                ),
             )
             records.extend(web_records)
         except (OSError, ValueError, RuntimeError) as error:
