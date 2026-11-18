@@ -19,6 +19,7 @@ classifiers = [
 # from verified resolutions (updated 2026-11-03); transitive
 # dependencies are resolved and locked deterministically in uv.lock.
 dependencies = [
+    "ace-anime-discovery==0.1.0",
     "playwright==1.64.1",
     "python-dotenv==1.2.4",
     "requests==2.34.2",
@@ -38,6 +39,7 @@ dev = [
 ]
 
 [tool.basedpyright]
+extraPaths = ["packages/ace-anime-discovery/src"]
 # This codebase is CLI-heavy: argparse registration uses expression statements
 # whose results (Action objects, return values) are intentionally discarded.
 # Keep this diagnostic off project-wide to avoid ~25 lines of noise.
@@ -52,3 +54,9 @@ packages = ["scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.workspace]
+members = ["packages/ace-anime-discovery"]
+
+[tool.uv.sources]
+ace-anime-discovery = { workspace = true }

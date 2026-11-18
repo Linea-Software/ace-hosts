@@ -1,0 +1,22 @@
+[project]
+name = "ace-anime-discovery"
+version = "0.1.0"
+description = "Independent evidence-led anime/manga discovery, crawling and review"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "playwright==1.64.1",
+    "requests==2.34.2",
+    "typing-extensions==4.15.0",
+]
+
+[project.scripts]
+ace-anime-discover = "ace_anime_discovery.anime_discovery:main"
+ace-anime-propose = "ace_anime_discovery.propose_anime_sites:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ace_anime_discovery"]
