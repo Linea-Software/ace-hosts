@@ -308,6 +308,12 @@ UTC. It downloads all categories, rebuilds the merged files and Ace site-pack
 ZIPs, rejects any asset larger than 2 GiB, creates `sha256_checksums.txt`, and
 publishes every output under a `vYYYY.MM.DD` tag.
 
+Before publication, `scripts/validate_tier_coverage.py` checks that the Adult,
+Gambling and Streaming Pro blocklists contain every domain from their Free
+counterparts. A missing Free domain fails the release rather than silently
+reducing Pro coverage. This compares actual generated domains, not advertised
+catalog counts.
+
 Release assets expose whole merged lists plus ready-to-consume Ace site packs:
 
 ```text

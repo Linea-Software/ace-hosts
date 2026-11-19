@@ -43,6 +43,9 @@ jobs:
       - name: Build Ace site packs
         run: uv run python scripts/build_site_packs.py
 
+      - name: Verify Pro includes Free coverage
+        run: uv run python scripts/validate_tier_coverage.py
+
       - name: Validate release asset sizes
         run: uv run python scripts/validate_release_assets.py hosts
 

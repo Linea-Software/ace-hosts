@@ -156,6 +156,15 @@ Their entry points call `scripts.*:main`.
 - Do not end the subject line with a period.
 - Commit after you complete and verify a task.
 
+## Free/Pro coverage release gate (2026-11-19)
+
+The release workflow runs `scripts/validate_tier_coverage.py` after merging
+and before packaging. For Adult, Gambling and Streaming, the Pro output must
+contain every corresponding Free domain. This is a release-data invariant, not
+an entitlement or client UI rule. Keep Free sets small enough to hold in memory;
+stream the large Pro files. Run `uv run pytest` and `uv run basedpyright`
+after changes.
+
 ## Curated Free starter packs (2026-11-08)
 
 `starter/gambling-starter.txt` and `starter/streaming-starter.txt` contain small, manually selected baseline domain lists.
