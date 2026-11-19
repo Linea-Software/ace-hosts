@@ -16,7 +16,8 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ace_anime_discovery import utils
-from ace_anime_discovery.anime_discovery import safe_hostname
+from ace_anime_discovery.anime_discovery import content_page_path, safe_hostname, normalize_hostname
+from urllib.parse import urlsplit
 
 
 def propose_sites(
@@ -64,20 +65,52 @@ def propose_sites(
                 {"site-homepage:html-title-description", "site-homepage:html-rendered"} & scrapes
             )
             joined = row.get("joined") is True
-            # Sitemap paths and on-page keywords are self-reported: without
-            # independent catalogs they must not become automated PR entries.
-            if families >= 2 or (families >= 1 and joined and scraped):
+            # The site itself can be the discovery source: a real homepage
+            # plus two fetched, distinct same-host content pages is eligible
+            # for human review without appearing in any existing catalog.
+            urls = row.get("onsite_content_urls")
+            content_urls: set[str] = set()
+            if isinstance(urls, list):
+                for raw in cast(list[object], urls):
+                    if not isinstance(raw, str):
+                        continue
+                    try:
+                        parsed = urlsplit(raw)
+                        if (parsed.scheme == "https" and parsed.hostname == host
+                                and content_page_path(parsed.path)
+                                and normalize_hostname(raw) == host):
+                            content_urls.add(parsed.path)
+                    except ValueError:
+                        continue
+            web_original = (
+                families == 0 and scraped
+                and row.get("verification_method") == "multi-page-website"
+                and row.get("review_eligible") is True
+                and len(content_urls) >= 2
+                and type(row.get("onsite_distinct_titles")) is int
+                and cast(int, row["onsite_distinct_titles"]) >= 2
+                and any(key.startswith("site-internal-page:") for key in scrapes)
+            )
+            if families >= 2 or (families >= 1 and joined and scraped) or web_original:
                 eligible.append(row)
 
-    # Prefer independently confirmed sites; one-catalog leads require a
-    # matching homepage and presence in the joined list.
-    eligible.sort(key=lambda row: (
-        -int(cast(int, row["independent_families"]) >= 2),
-        -int(bool({"site-homepage:html-title-description", "site-homepage:html-rendered"}
-                  & set(cast(list[str], row["evidence"])))),
-        cast(str, row["hostname"]),
-    ))
-    proposals = eligible[:max_new]
+    # Keep web-original discoveries visible even when catalog candidates
+    # are numerous. Each source gets fair slots; unused slots are filled.
+    web_originals = sorted(
+        (row for row in eligible if row.get("verification_method") == "multi-page-website"),
+        key=lambda row: (-cast(int, row.get("onsite_content_pages", 0)),
+                         cast(str, row["hostname"])),
+    )
+    catalogs = sorted(
+        (row for row in eligible if row.get("verification_method") != "multi-page-website"),
+        key=lambda row: (-cast(int, row["independent_families"]),
+                         cast(str, row["hostname"])),
+    )
+    proposals: list[dict[str, object]] = []
+    while len(proposals) < max_new and (web_originals or catalogs):
+        for group in (web_originals, catalogs):
+            if group and len(proposals) < max_new:
+                proposals.append(group.pop(0))
     names = sorted(cast(str, row["hostname"]) for row in proposals)
     if names:
         original = approved_file.read_text(encoding="utf-8")
@@ -97,13 +130,14 @@ def propose_sites(
         "Discovery combines independent catalogs, multilingual public-web search,",
         "robots-compliant recursive links, sitemaps and observed site metadata.",
         "Static HTTP and bounded Chromium rendering are used where permitted.",
-        "Web-only observations are retained in artifacts but never proposed automatically.",
-        "Every proposal must have two independent catalog families, or one",
-        "independent catalog family plus homepage evidence and a joined-list match.",
+        "Web-original sites absent from existing catalogs can be proposed after",
+        "fetching a thematic homepage and at least two distinct internal content pages.",
+        "Other proposals need two independent catalog families, or one",
+        "catalog family plus homepage evidence and a joined-list match.",
         "Proposed domains are **never published** without a merged PR.",
         "",
-        "| Domain | Sources | Categories | Languages | Independent catalogs | HTML | JS browser | Sitemap | In joined list | Verification level | Confidence | Verification method | Discovery source | Evidence |",
-        "| --- | --- | --- | --- | ---: | :---: | :---: | :---: | :---: | --- | ---: | --- | --- | --- |",
+        "| Domain | Sources | Categories | Languages | Independent catalogs | Content pages | HTML | JS browser | Sitemap | In joined list | Verification level | Confidence | Verification method | Discovery source | Evidence |",
+        "| --- | --- | --- | --- | ---: | ---: | :---: | :---: | :---: | :---: | --- | ---: | --- | --- | --- |",
     ]
     for row in sorted(proposals, key=lambda item: cast(str, item["hostname"])):
         evidence = cast(list[str], row["evidence"])
@@ -121,12 +155,13 @@ def propose_sites(
                             cast(list[object], discovery_sources)[:2]) if isinstance(discovery_sources, list) else ""
         method = str(row.get("verification_method", "catalog-and-site" if
                             any(e.startswith("site-homepage:") for e in evidence) else "catalogs"))
-        level = ("Confirmed" if cast(int, row["independent_families"]) >= 2
+        level = ("Web-original (multi-page)" if method == "multi-page-website"
+                 else "Confirmed" if cast(int, row["independent_families"]) >= 2
                  else "Catalog + homepage")
         details = ", ".join(str(value).replace("|", "/")[:55] for value in evidence[:5])
         body.append("".join([
             f"| `{row['hostname']}` | {source_list} | {kinds} | {langs} | ",
-            f"{row['independent_families']} | ",
+            f"{row['independent_families']} | {row.get('onsite_content_pages', 0)} | ",
             f"{'yes' if 'site-homepage:html-title-description' in evidence else 'no'} | ",
             f"{'yes' if 'site-homepage:html-rendered' in evidence else 'no'} | ",
             f"{'yes' if 'site-sitemap:sitemap-paths' in evidence else 'no'} | ",

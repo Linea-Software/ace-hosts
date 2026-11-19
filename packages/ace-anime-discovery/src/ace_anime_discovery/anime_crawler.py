@@ -14,6 +14,7 @@ import http.client
 import ipaddress
 import json
 import logging
+import re
 import socket
 import sqlite3
 import ssl
@@ -35,6 +36,7 @@ from ace_anime_discovery.anime_discovery import (
     Evidence,
     SitePage,
     _languages,  # pyright: ignore[reportPrivateUsage]
+    content_page_path,
     is_shared,
     normalize_hostname,
     safe_hostname,
@@ -55,6 +57,11 @@ MAX_HTML = 650_000
 MAX_ROBOTS = 100_000
 MAX_LINKS_PER_PAGE = 75
 MAX_ANCHORS_PER_PAGE = 3200
+# Do not treat access-denied and error pages as content verification.
+EMPTY_PAGE_TITLE = re.compile(
+    r"^(?:404|403|not found|access denied|just a moment|error|"
+    + r"under construction|coming soon)", re.IGNORECASE,
+)
 
 
 class LinkCollector(HTMLParser):
@@ -100,7 +107,8 @@ def ranked_links(html: str, page_url: str, limit: int = MAX_LINKS_PER_PAGE, *,
             continue
         thematic = bool(site_categories(unquote(url) + " " + label))
         if target == host:
-            if not site_categories(unquote(urlsplit(url).path)):
+            if not (site_categories(unquote(urlsplit(url).path))
+                    or content_page_path(urlsplit(url).path)):
                 continue
             score = 45 + (25 if thematic else 0)
         else:
@@ -354,6 +362,26 @@ class Frontier:
                     "INSERT OR REPLACE INTO run_state(key,value) VALUES('outbound_policy_version',2)"
                 )
             logger.info("crawl migration: removed %d legacy outbound leads", removed)
+        # Older cached HTML classifications used substring matches and SEO
+        # metadata. Recheck those pages before using them as multi-page proof.
+        policy = cast(tuple[int] | None, self.conn.execute(
+            "SELECT value FROM run_state WHERE key='site_evidence_policy_version'"
+        ).fetchone())
+        if policy is None or policy[0] < 3:
+            with self.conn:
+                stale = self.conn.execute(
+                    "DELETE FROM evidence WHERE repository IN ('site-homepage','site-internal-page')"
+                ).rowcount
+                self.conn.execute(
+                    "UPDATE frontier SET next_check=? WHERE status='done' AND "
+                    + "(url = 'https://' || host || '/' OR source LIKE 'internal:%' "
+                    + "OR source LIKE 'sitemap:%')",
+                    (time.time(),),
+                )
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO run_state(key,value) VALUES('site_evidence_policy_version',3)"
+                )
+            logger.info("crawl migration: invalidated %d stale site observations", stale)
         self.conn.execute("CREATE TEMP TABLE exhausted_hosts(host TEXT PRIMARY KEY)")
         self._claimed_per_host: Counter[str] = Counter()
         self._claim_calls: int = 0
@@ -406,6 +434,14 @@ class Frontier:
             self.conn.execute(
                 "DELETE FROM evidence WHERE host=? AND repository='site-homepage'",
                 (host,),
+            )
+
+    def clear_page_evidence(self, host: str, url: str) -> None:
+        """Do not trust an internal page after a failed or changed recheck."""
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM evidence WHERE host=? AND repository='site-internal-page' AND origin=?",
+                (host, url),
             )
 
     def claim(self, limit: int, max_pages_domain: int) -> list[CrawlPage]:
@@ -840,8 +876,9 @@ class WebCrawler:
                                         break
                                     if element.tag.rsplit("}", 1)[-1] == "loc" and element.text:
                                         loc = normalize_url(element.text)
-                                        if loc and urlsplit(loc).hostname == host and site_categories(
-                                                unquote(urlsplit(loc).path)):
+                                        if loc and urlsplit(loc).hostname == host and (
+                                                site_categories(unquote(urlsplit(loc).path))
+                                                or content_page_path(urlsplit(loc).path)):
                                             paths.append(loc)
                     except (OSError, ValueError, RuntimeError, ET.ParseError, http.client.HTTPException):
                         pass
@@ -860,13 +897,18 @@ class WebCrawler:
         if data.error:
             logger.info("crawl skipped: host=%s path=%s reason=%s",
                         host, urlsplit(page.url).path or "/", data.error)
-            if data.error != "budget-exhausted" and page.url == "https://" + host + "/":
-                self.frontier.clear_homepage_evidence(host)
+            if data.error != "budget-exhausted":
+                if page.url == "https://" + host + "/":
+                    self.frontier.clear_homepage_evidence(host)
+                else:
+                    self.frontier.clear_page_evidence(host, page.url)
             self.frontier.complete(page, data.error)
             self.errors[data.error] += 1
             return
         if page.url == "https://" + host + "/":
             self.frontier.clear_homepage_evidence(host)
+        else:
+            self.frontier.clear_page_evidence(host, page.url)
         categories = data.categories
         languages = data.languages
         title = data.title
@@ -883,16 +925,22 @@ class WebCrawler:
                 title = parser.title or title
                 method = "html-rendered"
                 self.browser_rendered += 1
-        if categories and page.kind != "directory" and safe_hostname(host):
-            logger.info("crawl matched: host=%s categories=%s method=%s",
-                        host, ",".join(categories), method)
-            # Internal article pages must not masquerade as verified homepages.
-            repository = ("site-homepage" if page.url == "https://" + host + "/"
-                          else "site-internal-page")
-            for category in categories:
-                self.frontier.evidence(Evidence(host, title or None, category, languages,
-                                               repository, None, "web-lead", method,
-                                               origin=page.url))
+        is_homepage = page.url == "https://" + host + "/"
+        structured_content = (not is_homepage and content_page_path(urlsplit(page.url).path)
+                              and len(title.strip()) >= 8
+                              and not EMPTY_PAGE_TITLE.search(title.strip()))
+        if page.kind != "directory" and safe_hostname(host) and (categories or structured_content):
+            if categories:
+                logger.info("crawl matched: host=%s categories=%s method=%s",
+                            host, ",".join(categories), method)
+            # Internal topical pages are supporting evidence, not homepage votes.
+            repository = "site-homepage" if is_homepage else "site-internal-page"
+            for category in categories or ("unknown",):
+                self.frontier.evidence(Evidence(
+                    host, title or None, category, languages, repository, None,
+                    "web-lead", method if categories else "structured-content-page",
+                    origin=page.url,
+                ))
         for loc in data.sitemap_paths:
             self.frontier.add(loc, depth=page.depth + 1,
                               source="sitemap:" + host, priority=25)
@@ -907,9 +955,10 @@ class WebCrawler:
             if target is None:
                 continue
             if target == host:
-                if site_categories(unquote(urlsplit(url).path)):
+                if (site_categories(unquote(urlsplit(url).path))
+                        or content_page_path(urlsplit(url).path)):
                     self.frontier.add(url, depth=page.depth + 1, source="internal:" + host,
-                                      priority=15)
+                                      priority=75)
             elif safe_hostname(target):
                 # Every external link remains a lead pending target verification.
                 self.frontier.add("https://" + target + "/", depth=page.depth + 1,

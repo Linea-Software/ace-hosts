@@ -66,7 +66,7 @@ and rotates through the unreviewed joined-domain list between runs. Joined
 entries are only weak discovery leads, never independent catalog votes.
    The crawler gives priority to relevant links, including links to unknown external hosts.
    It follows links recursively to the configured maximum depth.
-   It examines homepage metadata, body text, language, and limited same-origin sitemap paths.
+   It examines homepage title/description/headings, language, and limited same-origin sitemap paths. Body keyword spam does not establish site relevance. Concrete internal content routes are queued for actual HTML inspection; sitemap URLs alone do not qualify.
    It can also use Playwright Chromium when static metadata is missing.
    Treat all raw links and search results as **unverified leads**.
    They are not independent confirmations or release approvals.
@@ -81,8 +81,9 @@ entries are only weak discovery leads, never independent catalog votes.
    | 95 | Manually approved host |
    | 90 | Two independent catalog families and a match in joined |
    | 80 | Two independent catalog families without joined |
-   | 72 | Independent web discovery with verified website content relevant to the category |
-   | 60 | One catalog family, a match in joined, and inspected metadata |
+   | 75 | Web-original discovery: thematic homepage and two distinct successfully fetched internal content pages |
+   | 60 | One catalog family, a match in joined, and inspected homepage |
+   | 35 | Self-reported thematic homepage without two checked content pages |
    | 30 | Weaker evidence |
    | 0 | Excluded host |
 
@@ -90,7 +91,7 @@ entries are only weak discovery leads, never independent catalog votes.
    **Do not** count mirrored datasets, derived datasets, or web links as independent confirmations.
 
 5. **Record candidates.** The pipeline writes `downloads/anime-discovery/candidates.jsonl` as a candidate ledger.
-   It writes `eligible-anime.txt` as a preliminary list of candidates confirmed by catalogs.
+   It writes `eligible-anime.txt` as a preliminary list of validated candidates and previously approved hosts.
    These files are **intermediate outputs**.
    The pipeline can also propose website-verified candidates absent from all catalogs and joined.
    The SQLite frontier preserves crawl state.
@@ -99,9 +100,9 @@ entries are only weak discovery leads, never independent catalog votes.
 
 6. **Propose approved evidence for review.** ace_anime_discovery.propose_anime_sites creates **one review PR** for `seeds/anime-manga.txt`.
    A candidate qualifies through two independent catalog families.
-   It also qualifies through one catalog, joined, and an inspected homepage or sitemap.
-   Independent web leads qualify when inspected website metadata confirms the subject.
-   Sitemap-only and outbound-link-only leads do not qualify.
+   It also qualifies through one catalog family, joined, and an inspected homepage.
+   **Independent web-original leads qualify even with zero catalogs and no joined-list membership**, if the crawler successfully checks a thematic homepage and two distinct internal content pages with different titles. URL query variants of the same page or duplicate generic titles do not count.
+   Homepage metadata alone, sitemap-only, and outbound-link-only leads do not qualify. The two candidate types receive alternating proposal slots so catalog findings do not crowd out original discoveries.
    The English PR table shows content categories, languages, discovery sources, verification methods, evidence, status, and score.
    A person must review the changes.
    The maintainer can remove false positives before merging.

@@ -486,6 +486,21 @@ def site_categories(text: str) -> tuple[str, ...]:
     return tuple(name for name, pattern in CATEGORY_PATTERNS if pattern.search(text))
 
 
+CONTENT_PAGE_PATH = re.compile(
+    r"^/(?:"
+    + r"(?:en|it|ja|ko|zh|id|vi|th|es|pt|fr|de|ru|tr|ar)(?:-[a-z]{2,4})?/)?"
+    + r"(?:anime|manga|manhwa|manhua|webtoon|webcomic|comic|comics|"
+    + r"chapter|chapters|episode|episodes|series|title|titles|read|watch|"
+    + r"novel|webnovel|light-novel)/[^/?#]+",
+    re.IGNORECASE,
+)
+
+
+def content_page_path(path: str) -> bool:
+    """Concrete content route (not merely a /manga section landing page)."""
+    return bool(CONTENT_PAGE_PATH.search(unquote(path)))
+
+
 def _public_dns_host(host: str) -> bool:
     """Refuse homepages resolving to private, loopback or otherwise non-global IPs."""
     try:
@@ -660,9 +675,10 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
              allowed: set[str], excluded: set[str]) -> tuple[list[dict[str, object]], set[str]]:
     """Separate discovery confidence from approval for public release.
 
-    Web leads never count as independent catalog families. A site's own
-    metadata is self-asserted, not independent corroboration: web-only
-    discoveries stay in the ledger for manual investigation.
+    Web leads never count as independent catalog families. A standalone
+    website can qualify for a review proposal without appearing in any list,
+    but only after its thematic homepage and two distinct internal content
+    pages have actually been fetched successfully.
     """
     group: dict[str, list[Evidence]] = defaultdict(list)
     for record in records:
@@ -679,6 +695,34 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
                      if record.repository in {"web-link", "web-directory", "brave-search",
                                               "site-outbound", "joined-candidate"}}
         website_observed = bool(site_checks and web_leads)
+        # The crawler records these only after a successful HTML fetch. URL
+        # paths must be concrete content routes and stay on the exact host.
+        onsite_pages = sorted({
+            f"https://{host}{urlsplit(record.origin).path}"
+            for record in evidence
+            if record.repository == "site-internal-page"
+            and record.field in {
+                "html-title-description", "html-rendered", "structured-content-page"
+            }
+            and record.origin is not None
+            and urlsplit(record.origin).scheme == "https"
+            and urlsplit(record.origin).hostname == host
+            and content_page_path(urlsplit(record.origin).path)
+        })
+        onsite_titles = {
+            record.name.strip().casefold() for record in evidence
+            if record.repository == "site-internal-page"
+            and record.origin is not None
+            and record.name is not None
+            and len(record.name.strip()) >= 8
+            and urlsplit(record.origin).scheme == "https"
+            and urlsplit(record.origin).hostname == host
+            and content_page_path(urlsplit(record.origin).path)
+        }
+        web_original = (
+            website_observed and not families
+            and len(onsite_pages) >= 2 and len(onsite_titles) >= 2
+        )
         confirmed = len(families) >= MIN_INDEPENDENT_FAMILIES
         catalog_and_site = bool(families and site_checks and host in joined)
         trusted = host in pro or host in allowed or confirmed
@@ -686,7 +730,8 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
         # allow it to override the global whitelist or shared-host safeguards.
         rejected = host in excluded or not safe_hostname(host)
         status = ("excluded" if rejected else "pro" if host in pro else
-                  "validated-candidate" if trusted else "review")
+                  "validated-candidate" if trusted else
+                  "website-verified" if web_original else "review")
         if trusted and not rejected:
             approved.add(host)
         ledger.append({
@@ -700,16 +745,21 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
             "repositories": sorted({v.repository for v in evidence}),
             "discovery_sources": sorted({v.origin for v in evidence if v.origin})[:15],
             "verification_method": ("independent-catalogs" if confirmed else
+                                    "multi-page-website" if web_original else
                                     "website-observed" if website_observed else
                                     "unverified-lead"),
+            "onsite_content_pages": len(onsite_pages),
+            "onsite_distinct_titles": len(onsite_titles),
+            "onsite_content_urls": onsite_pages[:8],
             "release_approved": not rejected and (host in pro or host in allowed),
             "decision_reason": ("excluded by maintainer policy or infrastructure rule" if rejected
                                 else "present in curated Pro" if host in pro
                                 else "merged maintainer-approved seed" if host in allowed
                                 else "corroborated by independent catalog families" if confirmed
-                                else "self-reported website topic; independent corroboration missing" if website_observed
-                                else "insufficient independent content verification"),
-            "review_eligible": not rejected and (confirmed or catalog_and_site),
+                                else "homepage and two fetched, distinct content pages" if web_original
+                                else "homepage topic alone cannot verify a site" if website_observed
+                                else "insufficient content verification"),
+            "review_eligible": not rejected and (confirmed or catalog_and_site or web_original),
             "extension_ids": sorted({f"{v.repository}:{v.extension_id}" for v in evidence if v.extension_id}),
             "evidence": sorted({f"{v.repository}:{v.field}" for v in evidence}),
             "licenses": sorted({v.license for v in evidence if v.license is not None}),
@@ -719,6 +769,7 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
                           95 if host in allowed else
                           90 if len(families) >= 2 and host in joined else
                           80 if len(families) >= 2 else
+                          75 if web_original else
                           60 if catalog_and_site else
                           35 if website_observed else 30,
             "status": status,
@@ -762,7 +813,7 @@ def build_discovery(records: list[Evidence], *, joined_file: Path, pro_file: Pat
     excluded = _load_hostnames(whitelist_file) | _load_hostnames(exceptions_file)
     ledger, eligible = classify(records, joined, pro, allowed, excluded)
     counts = {state: sum(entry["status"] == state for entry in ledger)
-              for state in ("pro", "validated-candidate", "review", "excluded")}
+              for state in ("pro", "validated-candidate", "website-verified", "review", "excluded")}
     counts["website_observed_only"] = sum(
         entry["verification_method"] == "website-observed"
         and entry["independent_families"] == 0 for entry in ledger

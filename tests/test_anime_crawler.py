@@ -5,10 +5,11 @@ import json
 import logging
 import socket
 from pathlib import Path
+
 import pytest
 
-from scripts import anime_discovery as discovery
 from scripts import anime_crawler as crawler
+from scripts import anime_discovery as discovery
 from scripts.anime_search import parse_brave_results, search_queries
 from scripts.propose_anime_sites import propose_sites
 
@@ -145,7 +146,7 @@ def test_recursive_directory_finds_unknown_site_and_requires_human_review(
                               tmp_path / "exceptions", body)
     assert proposals == []
     assert approved_file.read_text(encoding="utf-8") == ""
-    assert "Web-only observations" in body.read_text(encoding="utf-8")
+    assert "Web-original sites" in body.read_text(encoding="utf-8")
 
 
 def test_request_and_depth_budget(tmp_path: Path) -> None:

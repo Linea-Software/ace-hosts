@@ -154,7 +154,7 @@ def test_pr_proposal_filters_and_is_idempotent(tmp_path: Path):
     generated_body = body.read_text(encoding="utf-8")
     assert "## New anime and manga sites for review" in generated_body
     assert "**2 new domains proposed**" in generated_body
-    assert "| Domain | Sources | Categories | Languages | Independent catalogs |" in generated_body
+    assert "| Domain | Sources | Categories | Languages | Independent catalogs | Content pages |" in generated_body
     assert "| yes |" in generated_body
     assert "Before merging:" in generated_body
     assert "Nuovi siti" not in generated_body
