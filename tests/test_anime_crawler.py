@@ -127,12 +127,13 @@ def test_recursive_directory_finds_unknown_site_and_requires_human_review(
     }
     ledger, approved = discovery.classify(evidence, set(), set(), set(), set())
     row = next(x for x in ledger if x["hostname"] == "unknown-reader.example.org")
-    assert row["status"] == "website-verified"
-    assert row["verification_method"] == "website-metadata"
-    assert row["confidence"] == 72
+    assert row["status"] == "review"
+    assert row["verification_method"] == "website-observed"
+    assert row["review_eligible"] is False
+    assert row["confidence"] == 35
     assert approved == set()  # No publication authority.
 
-    # The PR generator may propose this domain without a single catalog vote.
+    # A crawler-only match stays in the ledger, not the proposed seed.
     report = tmp_path / "candidates.jsonl"
     report.write_text("\n".join(json.dumps(r) for r in ledger), encoding="utf-8")
     approved_file = tmp_path / "review-seeds.txt"
@@ -142,9 +143,9 @@ def test_recursive_directory_finds_unknown_site_and_requires_human_review(
     body = tmp_path / "body.md"
     proposals = propose_sites(report, approved_file, pro_file, tmp_path / "whitelist",
                               tmp_path / "exceptions", body)
-    assert proposals == ["unknown-reader.example.org"]
-    assert "Website-verified" in body.read_text(encoding="utf-8")
-    assert "website-metadata" in body.read_text(encoding="utf-8")
+    assert proposals == []
+    assert approved_file.read_text(encoding="utf-8") == ""
+    assert "Web-only observations" in body.read_text(encoding="utf-8")
 
 
 def test_request_and_depth_budget(tmp_path: Path) -> None:

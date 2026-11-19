@@ -42,14 +42,15 @@ MAX_HTML_BYTES = 1_000_000
 MAX_SITEMAP_URLS = 400
 MIN_INDEPENDENT_FAMILIES = 2
 CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("anime", re.compile(r"anime|アニメ|动漫|動畫|애니메이션|аниме|أنمي|انمي", re.IGNORECASE)),
-    ("manga", re.compile(r"manga|漫画|漫畫|マンガ|mangá|манга|مانجا|مانغا|komik|truyện tranh|มังงะ|fumetti giapponesi", re.IGNORECASE)),
-    ("manhwa", re.compile(r"manhwa|만화|манхва", re.IGNORECASE)),
-    ("manhua", re.compile(r"manhua|国漫|國漫", re.IGNORECASE)),
-    ("webtoon", re.compile(r"webtoon|웹툰|条漫|條漫", re.IGNORECASE)),
-    ("scanlation", re.compile(r"scanlation|scantrad|scanlationes", re.IGNORECASE)),
-    ("light-novel", re.compile(r"light.?novel|ライトノベル|ラノベ|ранобэ|라이트노벨", re.IGNORECASE)),
-    ("webnovel", re.compile(r"web.?novel|网络小说|網絡小說|웹소설|tiểu thuyết mạng", re.IGNORECASE)),
+    # Reject embedded substrings (e.g. Bucaramanga, Mangaluru, animation).
+    ("anime", re.compile(r"(?<![a-z])animes?(?![a-z])|アニメ|动漫|動畫|애니메이션|аниме|أنمي|انمي", re.IGNORECASE)),
+    ("manga", re.compile(r"(?<![a-z])mangas?(?![a-z])|漫画|漫畫|マンガ|(?<![a-z])mangá(?![a-z])|манга|مانجا|مانغا|(?<![a-z])komik(?![a-z])|truyện tranh|มังงะ|fumetti giapponesi", re.IGNORECASE)),
+    ("manhwa", re.compile(r"(?<![a-z])manhwa(?![a-z])|만화|манхва", re.IGNORECASE)),
+    ("manhua", re.compile(r"(?<![a-z])manhua(?![a-z])|国漫|國漫", re.IGNORECASE)),
+    ("webtoon", re.compile(r"(?<![a-z])webtoons?(?![a-z])|웹툰|条漫|條漫", re.IGNORECASE)),
+    ("scanlation", re.compile(r"(?<![a-z])scanlations?(?![a-z])|(?<![a-z])scantrad(?![a-z])|(?<![a-z])scanlationes(?![a-z])", re.IGNORECASE)),
+    ("light-novel", re.compile(r"(?<![a-z])light[\s_-]*novels?(?![a-z])|ライトノベル|ラノベ|ранобэ|라이트노벨", re.IGNORECASE)),
+    ("webnovel", re.compile(r"(?<![a-z])web[\s_-]*novels?(?![a-z])|网络小说|網絡小說|웹소설|tiểu thuyết mạng", re.IGNORECASE)),
 )
 # Exact general services plus shared infrastructure: a thematic *subdomain*
 # is preserved if its parent is not shared, never collapsed to an eTLD+1.
@@ -473,9 +474,10 @@ class SitePage(DirectoryLinks):
 
     @property
     def topic_text(self) -> str:
+        # Keyword meta tags, JSON-LD and incidental body text are easily
+        # polluted by SEO spam, so they cannot verify an entire hostname.
         return " ".join((
-            self.title, self.og_title, self.description, self.keywords,
-            *self.headings, *self.json_ld, self.visible_text,
+            self.title, self.og_title, self.description, *self.headings,
         ))[:6000]
 
 
@@ -658,8 +660,9 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
              allowed: set[str], excluded: set[str]) -> tuple[list[dict[str, object]], set[str]]:
     """Separate discovery confidence from approval for public release.
 
-    Web leads never count as independent catalog families; verified websites
-    can be proposed for human review but cannot be auto-published.
+    Web leads never count as independent catalog families. A site's own
+    metadata is self-asserted, not independent corroboration: web-only
+    discoveries stay in the ledger for manual investigation.
     """
     group: dict[str, list[Evidence]] = defaultdict(list)
     for record in records:
@@ -675,36 +678,38 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
         web_leads = {record.repository for record in evidence
                      if record.repository in {"web-link", "web-directory", "brave-search",
                                               "site-outbound", "joined-candidate"}}
-        website_verified = bool(site_checks and web_leads)
+        website_observed = bool(site_checks and web_leads)
         confirmed = len(families) >= MIN_INDEPENDENT_FAMILIES
+        catalog_and_site = bool(families and site_checks and host in joined)
         trusted = host in pro or host in allowed or confirmed
         # The optional approval file allows explicitly reviewed hosts; never
         # allow it to override the global whitelist or shared-host safeguards.
         rejected = host in excluded or not safe_hostname(host)
         status = ("excluded" if rejected else "pro" if host in pro else
-                  "validated-candidate" if trusted else
-                  "website-verified" if website_verified else "review")
+                  "validated-candidate" if trusted else "review")
         if trusted and not rejected:
             approved.add(host)
         ledger.append({
             "hostname": host,
             "names": sorted({v.name for v in evidence if v.name}),
-            "categories": sorted({v.category for v in evidence if v.category in CONTENT_TYPES}),
+            "categories": sorted({v.category for v in evidence
+                                  if v.category in CONTENT_TYPES
+                                  and (v.family not in {"derived", "web-lead"}
+                                       or v.repository == "site-homepage")}),
             "languages": sorted({language for v in evidence for language in v.languages}),
             "repositories": sorted({v.repository for v in evidence}),
             "discovery_sources": sorted({v.origin for v in evidence if v.origin})[:15],
             "verification_method": ("independent-catalogs" if confirmed else
-                                    "website-metadata" if website_verified else
+                                    "website-observed" if website_observed else
                                     "unverified-lead"),
             "release_approved": not rejected and (host in pro or host in allowed),
             "decision_reason": ("excluded by maintainer policy or infrastructure rule" if rejected
                                 else "present in curated Pro" if host in pro
                                 else "merged maintainer-approved seed" if host in allowed
                                 else "corroborated by independent catalog families" if confirmed
-                                else "thematic homepage verified after web discovery" if website_verified
+                                else "self-reported website topic; independent corroboration missing" if website_observed
                                 else "insufficient independent content verification"),
-            "review_eligible": not rejected and (confirmed or website_verified
-                                    or (bool(families) and host in joined and bool(site_checks))),
+            "review_eligible": not rejected and (confirmed or catalog_and_site),
             "extension_ids": sorted({f"{v.repository}:{v.extension_id}" for v in evidence if v.extension_id}),
             "evidence": sorted({f"{v.repository}:{v.field}" for v in evidence}),
             "licenses": sorted({v.license for v in evidence if v.license is not None}),
@@ -714,8 +719,8 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
                           95 if host in allowed else
                           90 if len(families) >= 2 and host in joined else
                           80 if len(families) >= 2 else
-                          72 if website_verified else
-                          60 if families and host in joined and site_checks else 30,
+                          60 if catalog_and_site else
+                          35 if website_observed else 30,
             "status": status,
         })
     for host in sorted(allowed - group.keys()):
@@ -757,7 +762,11 @@ def build_discovery(records: list[Evidence], *, joined_file: Path, pro_file: Pat
     excluded = _load_hostnames(whitelist_file) | _load_hostnames(exceptions_file)
     ledger, eligible = classify(records, joined, pro, allowed, excluded)
     counts = {state: sum(entry["status"] == state for entry in ledger)
-              for state in ("pro", "validated-candidate", "website-verified", "review", "excluded")}
+              for state in ("pro", "validated-candidate", "review", "excluded")}
+    counts["website_observed_only"] = sum(
+        entry["verification_method"] == "website-observed"
+        and entry["independent_families"] == 0 for entry in ledger
+    )
     # A broken or hostile upstream cannot silently trigger an enormous jump.
     additional = eligible - pro
     if len(additional) > max(3000, len(pro) // 2):

@@ -82,8 +82,11 @@ class LinkCollector(HTMLParser):
             self._label = []
 
 
-def ranked_links(html: str, page_url: str, limit: int = MAX_LINKS_PER_PAGE) -> tuple[str, ...]:
-    """Prioritize topical outbound leads and topical internal directory pages."""
+def ranked_links(html: str, page_url: str, limit: int = MAX_LINKS_PER_PAGE, *,
+                 allow_generic_external: bool = False) -> tuple[str, ...]:
+    """Follow topical links; bound generic outbound links to trusted directories."""
+    if limit <= 0:
+        return ()
     collector = LinkCollector()
     collector.feed(html)
     host = urlsplit(page_url).hostname
@@ -101,12 +104,25 @@ def ranked_links(html: str, page_url: str, limit: int = MAX_LINKS_PER_PAGE) -> t
                 continue
             score = 45 + (25 if thematic else 0)
         else:
+            if not thematic and not allow_generic_external:
+                # A random link from an unverified homepage must not trigger
+                # a cascade across unrelated sites or SEO link farms.
+                continue
             score = 80 if thematic else 20
         scores[url] = max(score, scores.get(url, 0))
-    # Prefer unseen thematic external sites over navigation links. Low-score
-    # external links remain leads, subject to independent page inspection.
-    return tuple(url for url, _score in sorted(
-        scores.items(), key=lambda item: (-item[1], item[0]))[:limit])
+    ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+    # Allow only a handful of generic links on explicitly seeded directories.
+    result: list[str] = []
+    generic = 0
+    for url, score in ranked:
+        if score == 20:
+            if generic >= 5:
+                continue
+            generic += 1
+        result.append(url)
+        if len(result) >= limit:
+            break
+    return tuple(result)
 
 
 def normalize_url(raw: str) -> str | None:
@@ -319,6 +335,25 @@ class Frontier:
                 key TEXT PRIMARY KEY, digest TEXT NOT NULL
             );
         """)
+        # Earlier versions followed every outbound link from any page with a
+        # matching word. Discard that legacy link-farm backlog once; keep
+        # catalog, joined-list, search and explicit directory checkpoints.
+        version = cast(tuple[int] | None, self.conn.execute(
+            "SELECT value FROM run_state WHERE key='outbound_policy_version'"
+        ).fetchone())
+        if version is None or version[0] < 2:
+            with self.conn:
+                removed = self.conn.execute(
+                    "DELETE FROM frontier WHERE source LIKE 'outbound:%'"
+                ).rowcount
+                self.conn.execute("DELETE FROM evidence WHERE repository='web-link'")
+                self.conn.execute(
+                    "DELETE FROM domains WHERE host NOT IN (SELECT host FROM frontier)"
+                )
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO run_state(key,value) VALUES('outbound_policy_version',2)"
+                )
+            logger.info("crawl migration: removed %d legacy outbound leads", removed)
         self.conn.execute("CREATE TEMP TABLE exhausted_hosts(host TEXT PRIMARY KEY)")
         self._claimed_per_host: Counter[str] = Counter()
         self._claim_calls: int = 0
@@ -772,7 +807,9 @@ class WebCrawler:
             parser = SitePage()
             parser.feed(text)
             categories = site_categories(parser.topic_text)
-            links = ranked_links(text, page.url)
+            links = ranked_links(
+                text, page.url, allow_generic_external=page.kind == "directory"
+            )
             if page.source == "joined-candidate":
                 # A broad community blocklist is not reliable evidence on its
                 # own. Ignore incidental mentions in a generic blog/body.

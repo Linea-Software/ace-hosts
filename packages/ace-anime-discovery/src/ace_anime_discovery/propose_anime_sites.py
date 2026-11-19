@@ -1,8 +1,8 @@
 """Turn discovery findings into a maintainer-reviewable anime/manga seed PR.
 
-Only a merged seed entry can affect the published anime/manga list. Catalog corroboration or
-bounded homepage scraping makes a domain eligible for *proposal*, never for
-unreviewed publication.
+Only a merged seed entry can affect the published anime/manga list. Require
+independent catalog corroboration before adding a domain to a proposal; homepage
+keywords alone are insufficient and are vulnerable to SEO spam.
 """
 from __future__ import annotations
 
@@ -61,24 +61,19 @@ def propose_sites(
             evidence = row.get("evidence")
             scrapes: set[str] = set(cast(list[str], evidence)) if isinstance(evidence, list) else set()
             scraped = bool(
-                {"site-homepage:html-title-description", "site-homepage:html-rendered", "site-sitemap:sitemap-paths"} & scrapes
+                {"site-homepage:html-title-description", "site-homepage:html-rendered"} & scrapes
             )
             joined = row.get("joined") is True
-            web_sources = row.get("repositories", [])
-            web_lead = (isinstance(web_sources, list) and
-                        bool({"web-link", "web-directory", "brave-search", "site-outbound", "joined-candidate"}
-                             & set(cast(list[str], web_sources))))
-            website_verified = (row.get("verification_method") == "website-metadata"
-                                and row.get("review_eligible") is True
-                                and web_lead and scraped)
-            if families >= 2 or (families >= 1 and joined and scraped) or website_verified:
+            # Sitemap paths and on-page keywords are self-reported: without
+            # independent catalogs they must not become automated PR entries.
+            if families >= 2 or (families >= 1 and joined and scraped):
                 eligible.append(row)
 
-    # Prefer confirmed independent catalogs, then website-verified candidates.
+    # Prefer independently confirmed sites; one-catalog leads require a
+    # matching homepage and presence in the joined list.
     eligible.sort(key=lambda row: (
         -int(cast(int, row["independent_families"]) >= 2),
-        -int(row.get("verification_method") == "website-metadata"),
-        -int(bool({"site-homepage:html-title-description", "site-homepage:html-rendered", "site-sitemap:sitemap-paths"}
+        -int(bool({"site-homepage:html-title-description", "site-homepage:html-rendered"}
                   & set(cast(list[str], row["evidence"])))),
         cast(str, row["hostname"]),
     ))
@@ -100,10 +95,12 @@ def propose_sites(
         "Published lists remain unchanged until this PR is merged.",
         "",
         "Discovery combines independent catalogs, multilingual public-web search,",
-        "robots-compliant recursive links, sitemaps and verified site metadata.",
+        "robots-compliant recursive links, sitemaps and observed site metadata.",
         "Static HTTP and bounded Chromium rendering are used where permitted.",
-        "Scraped results and external links are **never published** "
-        + "without human review and a merged PR.",
+        "Web-only observations are retained in artifacts but never proposed automatically.",
+        "Every proposal must have two independent catalog families, or one",
+        "independent catalog family plus homepage evidence and a joined-list match.",
+        "Proposed domains are **never published** without a merged PR.",
         "",
         "| Domain | Sources | Categories | Languages | Independent catalogs | HTML | JS browser | Sitemap | In joined list | Verification level | Confidence | Verification method | Discovery source | Evidence |",
         "| --- | --- | --- | --- | ---: | :---: | :---: | :---: | :---: | --- | ---: | --- | --- | --- |",
@@ -124,7 +121,8 @@ def propose_sites(
                             cast(list[object], discovery_sources)[:2]) if isinstance(discovery_sources, list) else ""
         method = str(row.get("verification_method", "catalog-and-site" if
                             any(e.startswith("site-homepage:") for e in evidence) else "catalogs"))
-        level = "Website-verified" if method == "website-metadata" else "Confirmed" if cast(int, row["independent_families"]) >= 2 else "Catalog + website"
+        level = ("Confirmed" if cast(int, row["independent_families"]) >= 2
+                 else "Catalog + homepage")
         details = ", ".join(str(value).replace("|", "/")[:55] for value in evidence[:5])
         body.append("".join([
             f"| `{row['hostname']}` | {source_list} | {kinds} | {langs} | ",

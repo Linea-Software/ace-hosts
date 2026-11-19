@@ -149,7 +149,7 @@ def test_joined_backlog_rotates_and_is_not_published(tmp_path: Path) -> None:
         second.close()
 
 
-def test_joined_site_needs_homepage_evidence_for_review(tmp_path: Path) -> None:
+def test_joined_site_homepage_is_not_independent_verification(tmp_path: Path) -> None:
     from ace_anime_discovery.anime_discovery import classify
 
     crawl = WebCrawler(CrawlConfig(tmp_path / "verified.sqlite",
@@ -163,14 +163,15 @@ def test_joined_site_needs_homepage_evidence_for_review(tmp_path: Path) -> None:
         ))
         ledger, approved = classify(crawl.frontier.records(),
                                     {"mangareader.example.org"}, set(), set(), set())
-        assert ledger[0]["status"] == "website-verified"
-        assert ledger[0]["review_eligible"] is True
+        assert ledger[0]["status"] == "review"
+        assert ledger[0]["verification_method"] == "website-observed"
+        assert ledger[0]["review_eligible"] is False
         assert approved == set()
     finally:
         crawl.close()
 
 
-def test_joined_verified_candidate_reaches_review_pr(tmp_path: Path) -> None:
+def test_joined_website_only_candidate_cannot_reach_pr(tmp_path: Path) -> None:
     import json
 
     from ace_anime_discovery.anime_discovery import classify
@@ -193,8 +194,8 @@ def test_joined_verified_candidate_reaches_review_pr(tmp_path: Path) -> None:
     pro.write_text("", encoding="utf-8")
     accepted = propose_sites(path, seeds, pro, tmp_path / "whitelist.txt",
                              tmp_path / "exclusions.txt", tmp_path / "pr.md")
-    assert accepted == [host]
-    assert seeds.read_text(encoding="utf-8").strip() == host
+    assert accepted == []
+    assert seeds.read_text(encoding="utf-8") == ""
 
 
 def test_joined_homepage_requires_more_than_incidental_blog_reference(tmp_path: Path) -> None:

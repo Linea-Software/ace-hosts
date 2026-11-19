@@ -19,11 +19,13 @@ Discovery requires the currently downloaded anime/manga catalogs and joined inpu
 ## Design
 
 - Independent extension catalogs and optional official Brave Search API supply leads. Brave queries rotate through category/language combinations using a persistent cursor. An API key is optional and may incur separate provider costs.
-- A persistent SQLite frontier interleaves hosts rather than repeatedly processing hundreds of links from one site. It checkpoints work, expires evidence, handles failed requests conservatively, schedules monthly rechecks and upgrades legacy state databases.
+- A persistent SQLite frontier interleaves hosts rather than repeatedly processing hundreds of links from one site. It checkpoints work, expires evidence, handles failed requests conservatively, schedules monthly rechecks and upgrades legacy state databases. When upgraded to the stricter outbound-link policy, it discards one-time legacy outbound backlogs that were created by an overly broad crawl.
 - The unreviewed `newedgex-joined.txt` file is sampled via a persistent cursor. The joined-list cursor resets on upstream SHA-256 changes while preserving deduplicated hosts. A joined-only domain is **not** an independent catalog confirmation and is never exported to a published blocklist on that basis alone.
 - HTTP requests require public DNS answers, pinned IP addresses, verified TLS, HTTPS, robots permission (including Crawl-delay and Request-rate), body limits, per-host spacing and bounded global requests/time. Denied/rate-limited robots policies are cached for the current run, and due verification receives fair scheduling alongside new leads. 401/403/429 are not bypassed or retried.
 - Playwright remains an opt-in fallback. It restricts page requests to the same host, but **does not enforce DNS pinning**; hosted CI therefore does not enable it.
-- `candidates.jsonl` and review artifacts contain untrusted leads. Only a human-reviewed merge of `seeds/anime-manga.txt` affects published `ace-hosts` site packs.
+- Theme detection uses bounded title, description and heading evidence, with Latin-word boundaries. Arbitrary body keywords, JSON-LD and generic outbound links cannot by themselves validate a site's genre.
+- Web-only detections remain in `candidates.jsonl` for manual inspection; they never enter the automated seed PR. A proposed domain requires two independent extension-catalog families, or one independent family plus topical homepage evidence **and** presence in the joined list. Sitemap paths are only supporting hints.
+- `candidates.jsonl` and review artifacts contain untrusted leads. Only a human-reviewed merge of `seeds/anime-manga.txt` affects published `ace-hosts` site packs. Unrelated general-purpose hosts discovered in prior PRs are explicitly excluded in `exceptions/anime-manga.txt`.
 
 ## GitHub Actions
 

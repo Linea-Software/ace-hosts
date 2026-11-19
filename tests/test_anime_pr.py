@@ -144,17 +144,16 @@ def test_pr_proposal_filters_and_is_idempotent(tmp_path: Path):
     body = tmp_path / "pr-body.md"
 
     new = propose_sites(ledger, approved, pro, whitelist, exceptions, body)
-    assert new == ["confirmed.org", "scraped.org", "sitemap-reader.org"]
+    assert new == ["confirmed.org", "scraped.org"]
     assert list(utils.iter_domains(approved)) == [
-        "already.org", "confirmed.org", "scraped.org", "sitemap-reader.org",
+        "already.org", "confirmed.org", "scraped.org",
     ]
     assert "confirmed.org" in body.read_text(encoding="utf-8")
     assert "scraped.org" in body.read_text(encoding="utf-8")
-    assert "sitemap-reader.org" in body.read_text(encoding="utf-8")
+    assert "sitemap-reader.org" not in body.read_text(encoding="utf-8")
     generated_body = body.read_text(encoding="utf-8")
-    assert "ja" in generated_body
     assert "## New anime and manga sites for review" in generated_body
-    assert "**3 new domains proposed**" in generated_body
+    assert "**2 new domains proposed**" in generated_body
     assert "| Domain | Sources | Categories | Languages | Independent catalogs |" in generated_body
     assert "| yes |" in generated_body
     assert "Before merging:" in generated_body
