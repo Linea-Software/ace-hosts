@@ -32,6 +32,7 @@ from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
 from ace_anime_discovery.anime_browser import BrowserRenderer
+from ace_anime_discovery.anime_crawl_policy import public_crawl_url
 from ace_anime_discovery.anime_discovery import (
     Evidence,
     SitePage,
@@ -62,6 +63,20 @@ EMPTY_PAGE_TITLE = re.compile(
     r"^(?:404|403|not found|access denied|just a moment|error|"
     + r"under construction|coming soon)", re.IGNORECASE,
 )
+MISSING_ROBOTS_TITLE = re.compile(
+    r"\b(?:404|410)\b|(?:page|file|resource)\s+not\s+found|"
+    + r"not\s+found|does\s+not\s+exist", re.IGNORECASE,
+)
+
+
+def missing_robots_html(body: bytes) -> bool:
+    """Recognize only an explicit HTML not-found page, never a challenge."""
+    sample = body[:8192].decode("utf-8", "replace")
+    title = re.search(
+        r"<title(?:\s+[^>]*)?>([^<]{1,200})</title\s*>",
+        sample, re.IGNORECASE,
+    )
+    return bool(title and MISSING_ROBOTS_TITLE.search(title.group(1)))
 
 
 class LinkCollector(HTMLParser):
@@ -100,7 +115,7 @@ def ranked_links(html: str, page_url: str, limit: int = MAX_LINKS_PER_PAGE, *,
     scores: dict[str, int] = {}
     for href, label in collector.links:
         url = normalize_url(urljoin(page_url, href))
-        if not url:
+        if not url or not public_crawl_url(url):
             continue
         target = urlsplit(url).hostname
         if target is None or (target != host and is_shared(target)):
@@ -395,7 +410,7 @@ class Frontier:
     def add(self, url: str, *, depth: int, source: str,
             kind: str = "lead", priority: int = 20) -> bool:
         normalized = normalize_url(url)
-        if normalized is None or depth > 6:
+        if normalized is None or depth > 6 or not public_crawl_url(normalized):
             return False
         host = urlsplit(normalized).hostname
         if not host or (kind != "directory" and is_shared(host)):
@@ -625,6 +640,7 @@ class WebCrawler:
         self.budget: RequestBudget = RequestBudget(config.max_requests, config.max_seconds)
         self.fetch: Callable[..., PageResponse] = fetch
         self._robots: dict[str, RobotFileParser | None] = {}
+        self._robots_missing: set[str] = set()
         self._robots_failures: dict[str, str] = {}
         self._robots_lock: threading.Lock = threading.Lock()
         self._robots_guards: dict[str, threading.Lock] = {}
@@ -771,6 +787,9 @@ class WebCrawler:
                 self.errors[type(error).__name__] += 1
 
     def _allowed(self, url: str) -> bool:
+        # Prevent sensitive probes even with an absent or permissive robots.
+        if not public_crawl_url(url):
+            return False
         host = urlsplit(url).hostname
         if host is None:
             return False
@@ -793,7 +812,30 @@ class WebCrawler:
                         self._robots_failures[host] = "robots-temporary-error"
                         return False
                     parser: RobotFileParser | None = None
-                    if response.status == 200:
+                    # Some websites return a branded HTML "404" with HTTP
+                    # 200 for missing files. Only an explicit not-found title
+                    # permits fallback; an HTML challenge/login remains denied.
+                    response_start = response.body[:512].lower()
+                    html_response = ("html" in response.content_type.lower()
+                                     or b"<html" in response_start
+                                     or b"<!doctype html" in response_start)
+                    soft_missing = (
+                        response.status == 200
+                        and html_response
+                        and b"user-agent:" not in response.body.lower()
+                        and missing_robots_html(response.body)
+                    )
+                    if response.status in (404, 410) or soft_missing:
+                        self._robots_missing.add(host)
+                        logger.info(
+                            "robots absent: host=%s status=%d; public HTML paths only",
+                            host, response.status,
+                        )
+                    elif response.status == 200:
+                        if ("html" in response.content_type.lower()
+                                or b"<html" in response.body[:512].lower()):
+                            self._robots_failures[host] = "robots-invalid-content"
+                            return False
                         parser = RobotFileParser()
                         parser.parse(response.body.decode("utf-8", "replace").splitlines())
                         delay = parser.crawl_delay(AGENT)
@@ -811,13 +853,19 @@ class WebCrawler:
                             return False
                         with self._host_lock:
                             self._host_delay[host] = paced_delay
-                    elif response.status != 404:
-                        self._robots_failures[host] = "robots-unavailable"
+                    else:
+                        self._robots_failures[host] = f"robots-http-{response.status}"
+                        logger.info("robots denied: host=%s status=%d", host, response.status)
                         return False
                     self._robots[host] = parser
                 except (OSError, ValueError, RuntimeError, http.client.HTTPException,
-                        ssl.SSLError):
-                    self._robots_failures[host] = "robots-unavailable"
+                        ssl.SSLError) as error:
+                    reason = ("robots-tls-error" if isinstance(error, ssl.SSLError)
+                              else "robots-dns-error" if isinstance(error, socket.gaierror)
+                              else "robots-unavailable")
+                    self._robots_failures[host] = reason
+                    logger.info("robots fetch failed: host=%s cause=%s detail=%s",
+                                host, reason, type(error).__name__)
                     return False
             robots = self._robots[host]
         return robots is None or robots.can_fetch(AGENT, url)
@@ -828,7 +876,8 @@ class WebCrawler:
         logger.info("crawl visiting: host=%s path=%s source=%s depth=%d",
                     host, parts.path or "/", page.source, page.depth)
         if not self._allowed(page.url):
-            reason = ("budget-exhausted" if not self.budget.remaining()
+            reason = ("sensitive-url" if not public_crawl_url(page.url)
+                      else "budget-exhausted" if not self.budget.remaining()
                       else self._robots_failures.get(host, "robots denied or unavailable"))
             return InspectedPage(page, "", (), (), (), (), reason)
         try:
@@ -994,6 +1043,7 @@ class WebCrawler:
             "duration_seconds": round(time.monotonic() - self.started, 2),
             "browser_rendered": self.browser_rendered,
             "retry_count": self.retries,
+            "robots_missing_hosts": len(self._robots_missing),
             "errors": dict(self.errors),
             "websites_verified": len({e.hostname for e in records if e.repository == "site-homepage"}),
             "language_distribution": dict(Counter(lang for e in records for lang in e.languages)),

@@ -16,6 +16,8 @@ from playwright.sync_api import Browser, Route, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 from typing_extensions import Self
 
+from ace_anime_discovery.anime_crawl_policy import public_crawl_url
+
 logger = logging.getLogger("ace-hosts.anime-browser")
 MAX_RENDER_BYTES = 1_000_000
 MAX_BROWSER_REQUESTS = 60
@@ -89,6 +91,7 @@ class BrowserRenderer:
                     request = route.request
                     if (requests_seen > MAX_BROWSER_REQUESTS or
                             not same_origin_https(request.url, host) or
+                            not public_crawl_url(request.url) or
                             request.resource_type in {"image", "media", "font", "websocket"}):
                         route.abort()
                     else:

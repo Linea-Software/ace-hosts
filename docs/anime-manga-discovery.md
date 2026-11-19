@@ -207,8 +207,18 @@ HTTP connects to a checked, fixed IP address and verifies TLS for the original h
 The crawler does not follow redirects or connect to private IP targets.
 It follows robots.txt including the full Crawl-delay and Request-rate intervals,
 per-host request spacing, response byte limits, and explicit work budgets.
-A robots.txt 401, 403, 429 or server failure is cached as denied for the rest of
-the run; rate-limit/temporary failures are rechecked conservatively.
+A robots.txt 401, 403, 429, server/network failure, or failed TLS verification is
+cached as denied for the rest of the run; rate-limit/temporary failures are
+rechecked conservatively. When robots.txt genuinely does not exist (HTTP 404,
+410, or an explicitly titled HTML 404 served with HTTP 200), the crawler
+continues with **public HTML URLs only**, subject to strict segment and query
+pattern filters for login, accounts, administration, API, OAuth, private files,
+and service hosts. The filters also apply when robots.txt is present: explicit
+robots disallows always take precedence. A redirect, challenge/login page, or
+TLS failure is not interpreted as a missing file. The logs distinguish
+`robots-tls-error`, `robots-dns-error`, `robots-http-3xx`,
+`robots-invalid-content`, and missing-robots fallback. The browser fallback
+blocks sensitive same-origin requests too.
 It retries transient 5xx responses and timeouts, never access-control failures.
 Due rechecks receive a fair share of requests even if new leads keep arriving.
 Only verified domain-root pages provide site-homepage evidence: topical articles
@@ -224,7 +234,10 @@ public IP and therefore remains an explicit opt-in for trusted networks.
 Do not use browser fallback on deployment networks that require this protection.
 The crawler does not log in, solve CAPTCHAs, evade rate limits, or scrape restricted content.
 Do not accept pages that robots.txt, HTTP access rules, or errors prohibit.
-Treat an HTTP 404 response for robots.txt as no restriction.
+Treat a genuinely absent robots.txt (404, 410, or an explicitly titled HTML
+not-found page) as allowing *only the conservatively filtered public pages*.
+Do not bypass TLS checks or access controls; the fallback is not an authorization
+to inspect private or service endpoints.
 
 The frontier persists URL statuses, last-check and next-check dates, domain
 timestamps, evidence, an input-file checksum and independent cursors for joined-list samples and
