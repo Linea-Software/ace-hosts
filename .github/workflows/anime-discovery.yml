@@ -77,8 +77,8 @@ jobs:
         with:
           path: downloads/anime-discovery/crawl-state.sqlite*
           key: ${{ runner.os }}-anime-crawl-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Propose new sites for human review
-        run: uv run ace-anime-propose --max-new 200
+      - name: Propose all qualified sites for human review
+        run: uv run ace-anime-propose
       - name: Validate the proposed anime/manga list and tests
         run: |
           uv run python scripts/merge_hosts.py --category anime-manga --no-progress

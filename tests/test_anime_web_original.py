@@ -95,8 +95,10 @@ def test_crawler_discovers_unlisted_reader_and_verifies_actual_pages(
     assert row["status"] == "website-verified"
     proposed, body = _review(tmp_path, ledger)
     assert proposed == [host]
-    assert "Web-original (multi-page)" in body
-    assert "2 |" in body
+    assert "Web-original sites verified through multiple pages: **1**" in body
+    assert "Catalog-supported sites: **0**" in body
+    assert "| Domain |" not in body
+    assert host not in body
 
 
 def test_duplicate_query_parameters_do_not_simulate_two_content_pages(tmp_path: Path) -> None:
@@ -156,7 +158,7 @@ def test_sitemap_paths_alone_are_not_content_pages() -> None:
     ) == ("https://reader.example.org/series/one-piece",)
 
 
-def test_web_original_candidates_have_fair_review_slots(tmp_path: Path) -> None:
+def test_web_original_and_catalog_candidates_are_all_proposed(tmp_path: Path) -> None:
     def row(host: str, *, catalog: bool) -> dict[str, object]:
         return {
             "hostname": host,
@@ -189,11 +191,11 @@ def test_web_original_candidates_have_fair_review_slots(tmp_path: Path) -> None:
     pro.write_text("", encoding="utf-8")
     proposed = propose_sites(
         ledger, seed, pro, tmp_path / "whitelist", tmp_path / "exceptions",
-        tmp_path / "body.md", max_new=4,
+        tmp_path / "body.md",
     )
-    assert len(proposed) == 4
-    assert sum(host.startswith("web") for host in proposed) == 2
-    assert sum(host.startswith("catalog") for host in proposed) == 2
+    assert len(proposed) == 16
+    assert sum(host.startswith("web") for host in proposed) == 8
+    assert sum(host.startswith("catalog") for host in proposed) == 8
 
 
 def test_stale_cached_page_evidence_is_invalidated_on_policy_upgrade(

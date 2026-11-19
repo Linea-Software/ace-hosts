@@ -102,12 +102,11 @@ entries are only weak discovery leads, never independent catalog votes.
    A candidate qualifies through two independent catalog families.
    It also qualifies through one catalog family, joined, and an inspected homepage.
    **Independent web-original leads qualify even with zero catalogs and no joined-list membership**, if the crawler successfully checks a thematic homepage and two distinct internal content pages with different titles. URL query variants of the same page or duplicate generic titles do not count.
-   Homepage metadata alone, sitemap-only, and outbound-link-only leads do not qualify. The two candidate types receive alternating proposal slots so catalog findings do not crowd out original discoveries.
+   Homepage metadata alone, sitemap-only, and outbound-link-only leads do not qualify. Every eligible candidate is included, regardless of whether it was discovered from the web or catalogs.
    The English PR table shows content categories, languages, discovery sources, verification methods, evidence, status, and score.
    A person must review the changes.
    The maintainer can remove false positives before merging.
-   The hosted workflow proposes up to 200 new candidates per run (the CLI
-allows up to 250); the remainder stay available as review artifacts.
+   The hosted workflow and CLI propose **all qualified new candidates** without a numeric cap. The PR description contains only category counts and review instructions; the complete host list is the `seeds/anime-manga.txt` diff, with per-domain evidence in workflow artifacts.
 
 7. **Publish reviewed data.** Each month, the release job merges reviewed seeds from main into the Pro file.
    It validates output, exceptions, and approved-source provenance.
@@ -166,7 +165,7 @@ uv run python scripts/download_sources.py --category anime-manga
 uv run python scripts/merge_hosts.py --category anime-manga --no-progress
 uv run playwright install chromium  # optional; local browser fallback only
 uv run ace-anime-discover --refresh --crawl-web --crawl-requests 8000 --crawl-seconds 4500 --crawl-depth 3 --crawl-workers 12 --crawl-seed-hosts 1400 --crawl-joined-hosts 1800
-uv run ace-anime-propose --max-new 200  # changes reviewed seed; commit only via PR
+uv run ace-anime-propose  # proposes all eligible hosts; commit only via PR
 uv run python scripts/validate_category_outputs.py
 uv run python scripts/build_site_packs.py --pack pack-anime-manga-pro
 uv run pytest -q

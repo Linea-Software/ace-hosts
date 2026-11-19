@@ -11,7 +11,7 @@ uv sync --locked
 uv run ace-anime-discover --refresh --crawl-web \
   --crawl-requests 8000 --crawl-seconds 4500 --crawl-workers 12 \
   --crawl-seed-hosts 1400 --crawl-joined-hosts 1800
-uv run ace-anime-propose --max-new 200
+uv run ace-anime-propose
 ```
 
 The pipeline loads the currently downloaded catalogs and joined input produced by `ace-hosts` as optional discovery hints and for release-baseline comparisons. **A newly discovered site does not need to appear in any third-party list or extension catalog to qualify for a review proposal.** Paths can be overridden with CLI arguments. If invoked outside that directory, set `ACE_HOSTS_ROOT` or pass absolute paths for each input/output. The original `scripts/anime_*.py` import paths and discovery/proposal CLI scripts remain supported for compatibility.
@@ -26,7 +26,7 @@ The pipeline loads the currently downloaded catalogs and joined input produced b
 - Theme detection uses bounded title, description and heading evidence, with Latin-word boundaries. Arbitrary body keywords, JSON-LD and generic outbound links cannot by themselves validate a site's genre.
 - **Web-original sites:** the crawler can discover a completely unlisted site through web search or topic-focused links, inspect its thematic homepage, follow its own content routes (`/manga/title`, `/series/title`, etc.) and verify at least **two distinct internal pages with distinct content titles** by successful HTML fetch. Such sites are eligible for the *review PR*, even with zero independent catalogs and no joined-list match. Two query variants of the same path are not two pages; a sitemap URL by itself is not proof.
 - **Catalog-supported sites:** a proposed domain can alternatively have two independent extension-catalog families, or one family plus a topical homepage and joined-list match. A single self-reported topical homepage or unrelated outbound link does not qualify.
-- The proposal queue interleaves web-original and catalog-supported candidates so the latter cannot crowd out novel discoveries. These are evidence heuristics, not guarantees of topicality: a maintainer still has to verify every site before merging.
+- Every eligible web-original or catalog-supported candidate is included in the same review PR, with **no proposal-count cap**. The PR description contains only summary counts; inspect `seeds/anime-manga.txt` in Files changed and the workflow artifacts for per-site evidence. These are evidence heuristics, not guarantees of topicality: a maintainer still has to verify every site before merging.
 - `candidates.jsonl` and review artifacts contain untrusted leads. Only a human-reviewed merge of `seeds/anime-manga.txt` affects published `ace-hosts` site packs. Unrelated general-purpose hosts discovered in prior PRs are explicitly excluded in `exceptions/anime-manga.txt`.
 
 ## GitHub Actions

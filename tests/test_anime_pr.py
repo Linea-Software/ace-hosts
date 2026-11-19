@@ -148,21 +148,59 @@ def test_pr_proposal_filters_and_is_idempotent(tmp_path: Path):
     assert list(utils.iter_domains(approved)) == [
         "already.org", "confirmed.org", "scraped.org",
     ]
-    assert "confirmed.org" in body.read_text(encoding="utf-8")
-    assert "scraped.org" in body.read_text(encoding="utf-8")
-    assert "sitemap-reader.org" not in body.read_text(encoding="utf-8")
     generated_body = body.read_text(encoding="utf-8")
     assert "## New anime and manga sites for review" in generated_body
     assert "**2 new domains proposed**" in generated_body
-    assert "| Domain | Sources | Categories | Languages | Independent catalogs | Content pages |" in generated_body
-    assert "| yes |" in generated_body
-    assert "Before merging:" in generated_body
+    assert "Web-original sites verified through multiple pages: **0**" in generated_body
+    assert "Catalog-supported sites: **2**" in generated_body
+    assert "Files changed" in generated_body
+    assert "seeds/anime-manga.txt" in generated_body
+    assert "workflow artifacts" in generated_body
+    assert "confirmed.org" not in generated_body
+    assert "scraped.org" not in generated_body
+    assert "sitemap-reader.org" not in generated_body
+    assert "| Domain |" not in generated_body
     assert "Nuovi siti" not in generated_body
     assert "sì" not in generated_body
 
     original = approved.read_bytes()
     assert propose_sites(ledger, approved, pro, whitelist, exceptions, body) == []
     assert approved.read_bytes() == original
+
+
+def test_pr_proposes_more_than_250_hosts_without_a_giant_body(tmp_path: Path) -> None:
+    ledger = tmp_path / "candidates.jsonl"
+    hosts = [f"anime-reader-{i:04d}.org" for i in range(600)]
+    ledger.write_text(
+        "".join(json.dumps({
+            "hostname": host,
+            "status": "validated-candidate",
+            "independent_families": 2,
+            "evidence": ["aidoku:baseURL"],
+            "joined": False,
+        }) + "\n" for host in hosts),
+        encoding="utf-8",
+    )
+    seed = tmp_path / "approved.txt"
+    seed.write_text("", encoding="utf-8")
+    pro = tmp_path / "pro.txt"
+    pro.write_text("", encoding="utf-8")
+    body = tmp_path / "pr-body.md"
+
+    proposed = propose_sites(
+        ledger, seed, pro, tmp_path / "whitelist",
+        tmp_path / "exceptions", body,
+    )
+
+    assert proposed == sorted(hosts)
+    assert list(utils.iter_domains(seed)) == sorted(hosts)
+    pr_body = body.read_text(encoding="utf-8")
+    assert "**600 new domains proposed**" in pr_body
+    assert "Catalog-supported sites: **600**" in pr_body
+    assert "Files changed" in pr_body
+    assert len(pr_body) < 1_500
+    assert not any(host in pr_body for host in hosts)
+    assert "|" not in pr_body
 
 
 def test_unmerged_discovery_report_cannot_enter_release(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

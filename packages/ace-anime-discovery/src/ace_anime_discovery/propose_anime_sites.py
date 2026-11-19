@@ -1,8 +1,8 @@
 """Turn discovery findings into a maintainer-reviewable anime/manga seed PR.
 
-Only a merged seed entry can affect the published anime/manga list. Require
-independent catalog corroboration before adding a domain to a proposal; homepage
-keywords alone are insufficient and are vulnerable to SEO spam.
+Only a merged seed entry can affect the published anime/manga list. Propose
+every qualified domain without a numeric cap. Independent catalogs or multi-page
+website verification are required; homepage keywords alone are insufficient.
 """
 from __future__ import annotations
 
@@ -27,12 +27,8 @@ def propose_sites(
     whitelist_file: Path,
     exceptions_file: Path,
     body_path: Path,
-    *,
-    max_new: int = 100,
 ) -> list[str]:
-    """Append safe proposals to the reviewed seed; write a human-readable PR body."""
-    if not 1 <= max_new <= 250:
-        raise ValueError("max_new must be between 1 and 250")
+    """Append all qualified proposals and write a concise review PR body."""
     for path in (ledger_path, approved_file, pro_file):
         if not path.is_file():
             raise ValueError(f"missing current discovery input: {path}")
@@ -94,24 +90,13 @@ def propose_sites(
             if families >= 2 or (families >= 1 and joined and scraped) or web_original:
                 eligible.append(row)
 
-    # Keep web-original discoveries visible even when catalog candidates
-    # are numerous. Each source gets fair slots; unused slots are filled.
-    web_originals = sorted(
-        (row for row in eligible if row.get("verification_method") == "multi-page-website"),
-        key=lambda row: (-cast(int, row.get("onsite_content_pages", 0)),
-                         cast(str, row["hostname"])),
+    # Do not truncate: every qualified domain goes into the review PR.
+    # The complete list lives in the seed diff, not in the PR description.
+    names = sorted(cast(str, row["hostname"]) for row in eligible)
+    web_original_count = sum(
+        row.get("verification_method") == "multi-page-website" for row in eligible
     )
-    catalogs = sorted(
-        (row for row in eligible if row.get("verification_method") != "multi-page-website"),
-        key=lambda row: (-cast(int, row["independent_families"]),
-                         cast(str, row["hostname"])),
-    )
-    proposals: list[dict[str, object]] = []
-    while len(proposals) < max_new and (web_originals or catalogs):
-        for group in (web_originals, catalogs):
-            if group and len(proposals) < max_new:
-                proposals.append(group.pop(0))
-    names = sorted(cast(str, row["hostname"]) for row in proposals)
+    catalog_count = len(eligible) - web_original_count
     if names:
         original = approved_file.read_text(encoding="utf-8")
         suffix = "" if original.endswith("\n") or not original else "\n"
@@ -123,61 +108,18 @@ def propose_sites(
     body = [
         "## New anime and manga sites for review",
         "",
-        f"**{len(names)} new {'domain' if len(names) == 1 else 'domains'} proposed**. When you review and merge this PR into `main`,",
-        "the next release will automatically add them to **Anime/Manga Pro**.",
-        "Published lists remain unchanged until this PR is merged.",
+        f"**{len(names)} new {'domain' if len(names) == 1 else 'domains'} proposed** for Anime/Manga Pro.",
         "",
-        "Discovery combines independent catalogs, multilingual public-web search,",
-        "robots-compliant recursive links, sitemaps and observed site metadata.",
-        "Static HTTP and bounded Chromium rendering are used where permitted.",
-        "Web-original sites absent from existing catalogs can be proposed after",
-        "fetching a thematic homepage and at least two distinct internal content pages.",
-        "Other proposals need two independent catalog families, or one",
-        "catalog family plus homepage evidence and a joined-list match.",
-        "Proposed domains are **never published** without a merged PR.",
+        f"- Web-original sites verified through multiple pages: **{web_original_count}**",
+        f"- Catalog-supported sites: **{catalog_count}**",
         "",
-        "| Domain | Sources | Categories | Languages | Independent catalogs | Content pages | HTML | JS browser | Sitemap | In joined list | Verification level | Confidence | Verification method | Discovery source | Evidence |",
-        "| --- | --- | --- | --- | ---: | ---: | :---: | :---: | :---: | :---: | --- | ---: | --- | --- | --- |",
+        "Review the complete list in the **Files changed** tab (`seeds/anime-manga.txt`).",
+        "Remove unrelated sites, mirrors, or false positives from the seed file before merging.",
+        "The whitelist and category exclusions still apply.",
+        "",
+        "Full per-domain evidence, discovery sources and crawl reports are available in the workflow artifacts.",
+        "**Nothing is published until this PR is reviewed and merged.**",
     ]
-    for row in sorted(proposals, key=lambda item: cast(str, item["hostname"])):
-        evidence = cast(list[str], row["evidence"])
-        sources = row.get("repositories", [])
-        source_list = ", ".join(
-            source for source in cast(list[str], sources)
-            if source.isascii() and source.replace("-", "").replace("_", "").isalnum()
-        ) if isinstance(sources, list) else ""
-        categories = row.get("categories", [])
-        languages = row.get("languages", [])
-        kinds = ", ".join(str(v) for v in cast(list[object], categories)) if isinstance(categories, list) else ""
-        langs = ", ".join(str(v) for v in cast(list[object], languages)) if isinstance(languages, list) else ""
-        discovery_sources = row.get("discovery_sources", [])
-        origins = ", ".join(str(url).replace("|", "%7C")[:120] for url in
-                            cast(list[object], discovery_sources)[:2]) if isinstance(discovery_sources, list) else ""
-        method = str(row.get("verification_method", "catalog-and-site" if
-                            any(e.startswith("site-homepage:") for e in evidence) else "catalogs"))
-        level = ("Web-original (multi-page)" if method == "multi-page-website"
-                 else "Confirmed" if cast(int, row["independent_families"]) >= 2
-                 else "Catalog + homepage")
-        details = ", ".join(str(value).replace("|", "/")[:55] for value in evidence[:5])
-        body.append("".join([
-            f"| `{row['hostname']}` | {source_list} | {kinds} | {langs} | ",
-            f"{row['independent_families']} | {row.get('onsite_content_pages', 0)} | ",
-            f"{'yes' if 'site-homepage:html-title-description' in evidence else 'no'} | ",
-            f"{'yes' if 'site-homepage:html-rendered' in evidence else 'no'} | ",
-            f"{'yes' if 'site-sitemap:sitemap-paths' in evidence else 'no'} | ",
-            f"{'yes' if row['joined'] is True else 'no'} | ",
-            f"{level} | {row.get('confidence', 0)} | {method} | {origins} | {details} |",
-        ]))
-    body.extend([
-        "",
-        "**Before merging:** verify that each domain is a relevant thematic site, not a",
-        "general-purpose service, an unwanted mirror, or a false positive. Remove lines",
-        "from `seeds/anime-manga.txt` directly in the PR.",
-        "The whitelist and category exclusions still take precedence.",
-        "",
-        "Raw discovery evidence and candidates not proposed are in the artifacts",
-        "from the Anime Discovery workflow.",
-    ])
     utils.atomic_write_lines(body_path, body)
     return names
 
@@ -189,7 +131,6 @@ class ProposalArgs(argparse.Namespace):
     whitelist: Path = utils.PROJECT_ROOT / "whitelist.txt"
     exceptions: Path = utils.PROJECT_ROOT / "exceptions" / "anime-manga.txt"
     body: Path = utils.PROJECT_ROOT / "downloads" / "anime-discovery" / "pr-body.md"
-    max_new: int = 100
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -200,11 +141,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--whitelist", type=Path, default=ProposalArgs.whitelist)
     parser.add_argument("--exceptions", type=Path, default=ProposalArgs.exceptions)
     parser.add_argument("--body", type=Path, default=ProposalArgs.body)
-    parser.add_argument("--max-new", type=int, default=100)
     args = parser.parse_args(argv, namespace=ProposalArgs())
     try:
         sites = propose_sites(args.ledger, args.approved_file, args.pro_file, args.whitelist,
-                              args.exceptions, args.body, max_new=args.max_new)
+                              args.exceptions, args.body)
     except (ValueError, OSError, json.JSONDecodeError) as error:
         parser.exit(1, f"anime discovery proposal failed: {error}\n")
     print(f"Anime Discovery: {len(sites)} new domain(s) proposed for PR")
