@@ -7,7 +7,6 @@ page nor an unverified web link is an independent catalog confirmation.
 from __future__ import annotations
 
 import argparse
-import html.parser
 import ipaddress
 import json
 import logging
@@ -26,6 +25,9 @@ from urllib.parse import quote, unquote, urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
 import requests
+from bs4 import BeautifulSoup
+from bs4.element import NavigableString
+from typing_extensions import override
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -51,6 +53,11 @@ ELIGIBILITY_PATH_REQUIREMENTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("catalog-verified-content", ("policy_allowed", "independent_catalog_family",
                                   "topical_homepage", "two_verified_content_pages",
                                   "two_distinct_content_titles")),
+    # Human review only: an independently catalogued reader with multiple
+    # verified pages should not require a potentially unavailable homepage.
+    ("catalog-verified-pages", ("policy_allowed", "independent_catalog_family",
+                                 "two_verified_content_pages",
+                                 "two_distinct_content_titles")),
     ("web-original", ("policy_allowed", "no_catalog_family", "web_discovery_lead",
                       "topical_homepage", "two_verified_content_pages",
                       "two_distinct_content_titles")),
@@ -318,17 +325,20 @@ def parse_catalog(payload: object, catalog: Catalog) -> list[Evidence]:
     return results
 
 
-class DirectoryLinks(html.parser.HTMLParser):
-    """One-page directory extraction; no recursive crawling."""
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.links: list[str] = []
+class DirectoryLinks:
+    """One-page directory link extraction using a bounded HTML tree."""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # pyright: ignore[reportImplicitOverride]
-        if tag == "a" and len(self.links) < MAX_DIRECTORY_LINKS:
-            address = dict(attrs).get("href")
-            if address:
-                self.links.append(address)
+    def __init__(self) -> None:
+        self.links: list[str] = []
+        self._soup: BeautifulSoup | None = None
+
+    def feed(self, html: str) -> None:
+        self._soup = BeautifulSoup(html[:MAX_HTML_BYTES], "lxml")
+        self.links = [
+            str(link.get("href"))[:2048]
+            for link in self._soup.find_all("a", href=True, limit=MAX_DIRECTORY_LINKS)
+            if link.get("href")
+        ]
 
 
 def _fetch(session: requests.Session, url: str, *, timeout: float, attempts: int = 3,
@@ -406,7 +416,7 @@ def fetch_directory(session: requests.Session, url: str, *, timeout: float = 12)
 
 
 class SitePage(DirectoryLinks):
-    """Bounded visible metadata: title, OpenGraph, headings and JSON-LD."""
+    """Bounded page metadata, without treating SEO/body text as site evidence."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -417,66 +427,61 @@ class SitePage(DirectoryLinks):
         self.language: str = ""
         self.headings: list[str] = []
         self.json_ld: list[str] = []
-        self._in_title: bool = False
-        self._in_heading: bool = False
-        self._in_json_ld: bool = False
-        self._in_body: bool = False
-        self._hidden_depth: int = 0
         self.visible_parts: list[str] = []
         self.canonical: str = ""
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # pyright: ignore[reportImplicitOverride]
-        super().handle_starttag(tag, attrs)
-        attributes = dict(attrs)
-        if tag == "title":
-            self._in_title = True
-        elif tag in {"h1", "h2"}:
-            self._in_heading = True
-        elif tag == "script" and (attributes.get("type") or "").lower() == "application/ld+json":
-            self._in_json_ld = True
-        elif tag == "html":
-            self.language = attributes.get("lang") or ""
-        elif tag == "body":
-            self._in_body = True
-        elif tag in {"script", "style", "noscript"}:
-            self._hidden_depth += 1
-        elif tag == "link" and "canonical" in (attributes.get("rel") or "").lower():
-            self.canonical = (attributes.get("href") or "")[:1000]
-        elif tag == "meta":
-            key = (attributes.get("name") or attributes.get("property") or "").lower()
-            content = (attributes.get("content") or "")[:1000]
+    @override
+    def feed(self, html: str) -> None:
+        super().feed(html)
+        soup = self._soup
+        if soup is None:
+            return
+        title = soup.find("title")
+        self.title_parts = [title.get_text(" ", strip=True)[:512]] if title else []
+        root = soup.find("html")
+        self.language = str(root.get("lang") or "")[:100] if root else ""
+        self.headings = [
+            heading.get_text(" ", strip=True)[:200]
+            for heading in soup.select("h1, h2")[:15]
+        ]
+        self.description = ""
+        self.keywords = ""
+        self.og_title = ""
+        for meta in soup.select("meta"):
+            key = str(meta.get("name") or meta.get("property") or "").lower()
+            content = str(meta.get("content") or "")[:1000]
             if key in {"description", "og:description", "twitter:description"}:
-                self.description = content if not self.description else self.description
+                if not self.description:
+                    self.description = content
             elif key == "keywords":
                 self.keywords = content
             elif key in {"og:title", "twitter:title"}:
                 self.og_title = content
+        self.canonical = ""
+        for link in soup.select("link[href][rel]"):
+            if "canonical" in str(link.get("rel") or "").casefold():
+                self.canonical = str(link.get("href") or "")[:1000]
+                break
+        self.json_ld = [
+            script.get_text()[:1000]
+            for script in soup.select('script[type="application/ld+json"]')[:3]
+        ]
+        self.visible_parts = []
+        body = soup.find("body")
+        if body is not None:
+            for string in body.descendants:
+                if len(self.visible_parts) >= 35:
+                    break
+                if not isinstance(string, NavigableString) or string.find_parent(
+                    ["script", "style", "noscript", "template"]
+                ):
+                    continue
+                if cleaned := str(string).strip():
+                    self.visible_parts.append(cleaned[:160])
 
-    def handle_endtag(self, tag: str) -> None:  # pyright: ignore[reportImplicitOverride]
-        if tag == "title":
-            self._in_title = False
-        elif tag in {"h1", "h2"}:
-            self._in_heading = False
-        elif tag == "script":
-            self._in_json_ld = False
-            self._hidden_depth = max(0, self._hidden_depth - 1)
-        elif tag in {"style", "noscript"}:
-            self._hidden_depth = max(0, self._hidden_depth - 1)
-        elif tag == "body":
-            self._in_body = False
-
-    def handle_data(self, data: str) -> None:  # pyright: ignore[reportImplicitOverride]
-        if self._in_title and sum(map(len, self.title_parts)) < 512:
-            self.title_parts.append(data[:512])
-        elif self._in_heading and len(self.headings) < 15:
-            self.headings.append(data[:200])
-        elif self._in_json_ld and len(self.json_ld) < 3:
-            # JSON-LD is untrusted text, not code. No JSON-LD fetches are made.
-            self.json_ld.append(data[:1000])
-        elif self._in_body and self._hidden_depth == 0 and len(self.visible_parts) < 35:
-            cleaned = data.strip()
-            if cleaned:
-                self.visible_parts.append(cleaned[:160])
+    @property
+    def soup(self) -> BeautifulSoup | None:
+        return self._soup
 
     @property
     def title(self) -> str:
@@ -488,8 +493,7 @@ class SitePage(DirectoryLinks):
 
     @property
     def topic_text(self) -> str:
-        # Keyword meta tags, JSON-LD and incidental body text are easily
-        # polluted by SEO spam, so they cannot verify an entire hostname.
+        # SEO keyword metadata and incidental body text cannot verify a site.
         return " ".join((
             self.title, self.og_title, self.description, *self.headings,
         ))[:6000]
@@ -776,6 +780,7 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
             if path["qualified"] is True
         }
         catalog_verified = "catalog-verified-content" in qualified_paths
+        catalog_pages = "catalog-verified-pages" in qualified_paths
         web_original = "web-original" in qualified_paths
         confirmed = len(families) >= MIN_INDEPENDENT_FAMILIES
         catalog_and_site = bool(families and site_checks and host in joined)
@@ -796,7 +801,7 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
             "repositories": sorted({v.repository for v in evidence}),
             "discovery_sources": sorted({v.origin for v in evidence if v.origin})[:15],
             "verification_method": ("independent-catalogs" if confirmed else
-                                    "catalog-and-verified-pages" if catalog_verified else
+                                    "catalog-and-verified-pages" if catalog_verified or catalog_pages else
                                     "multi-page-website" if web_original else
                                     "website-observed" if website_observed else
                                     "unverified-lead"),
@@ -809,6 +814,7 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
                                 else "merged maintainer-approved seed" if host in allowed
                                 else "corroborated by independent catalog families" if confirmed
                                 else "catalog, homepage and distinct verified content pages" if catalog_verified
+                                else "catalog and distinct verified pages; homepage still requires review" if catalog_pages
                                 else "homepage and two fetched, distinct content pages" if web_original
                                 else "homepage topic alone cannot verify a site" if website_observed
                                 else "insufficient content verification"),
@@ -825,6 +831,7 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
                           90 if len(families) >= 2 and host in joined else
                           80 if len(families) >= 2 else
                           85 if catalog_verified else
+                          75 if catalog_pages else
                           75 if web_original else
                           60 if catalog_and_site else
                           35 if website_observed else 30,

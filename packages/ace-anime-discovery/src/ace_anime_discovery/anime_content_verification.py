@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from html.parser import HTMLParser
 from typing import cast
+
+from bs4 import BeautifulSoup, Tag
+from bs4.element import NavigableString
 from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 
 MAX_HTML_CHARS = 650_000
@@ -19,6 +21,8 @@ MAX_TITLE_CHARS = 200
 MAX_JSON_LD_CHARS = 32_000
 MAX_LINKS = 250
 MAX_IMAGES = 200
+MAX_SCANNED_LINKS = 4000
+MAX_SCANNED_IMAGES = 4000
 
 _VISUAL = frozenset({"manga", "manhwa", "manhua", "webtoon", "scanlation"})
 _NOVELS = frozenset({"light-novel", "webnovel"})
@@ -140,11 +144,10 @@ def _schema_types(value: object) -> set[str]:
     return result
 
 
-class _ContentParser(HTMLParser):
-    """Extract structural facts, not an unbounded copy of document text."""
+class _ContentParser:
+    """Extract bounded structural observations from one Beautiful Soup tree."""
 
     def __init__(self, page_url: str) -> None:
-        super().__init__(convert_charrefs=True)
         self.page_url: str = page_url
         self.host: str = urlsplit(page_url).hostname or ""
         self.title_parts: list[str] = []
@@ -161,138 +164,102 @@ class _ContentParser(HTMLParser):
         self.novel_paragraphs: int = 0
         self.novel_container: bool = False
         self.schema_types: set[str] = set()
-        self._in_title: bool = False
-        self._heading_level: int = 0
-        self._heading_parts: list[str] = []
-        self._anchor_href: str = ""
-        self._anchor_parts: list[str] = []
-        self._paragraph_depth: int = 0
-        self._paragraph_parts: list[str] = []
-        self._json_ld: bool = False
-        self._json_ld_parts: list[str] = []
-        self._hidden: int = 0
-        self._containers: list[tuple[str, bool, bool]] = []
 
-    def _in_reader(self) -> bool:
-        return any(reader for _, reader, _ in self._containers)
+    @staticmethod
+    def _classes(tag: Tag) -> str:
+        raw_classes: object = tag.get("class") or []
+        tokens = (" ".join(str(token) for token in cast(list[object], raw_classes))
+                  if isinstance(raw_classes, list) else str(raw_classes))
+        return " ".join((tokens, str(tag.get("id") or ""),
+                         str(tag.get("itemprop") or "")))
 
-    def _in_novel(self) -> bool:
-        return any(novel for _, _, novel in self._containers)
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # pyright: ignore[reportImplicitOverride]
-        a = {key.lower(): (value or "")[:1024] for key, value in attrs}
-        classes = " ".join((a.get("class", ""), a.get("id", ""),
-                            a.get("itemprop", "")))
-        if tag in {"div", "section", "main", "article"}:
-            reader = bool(_READER.search(classes))
-            novel = bool(_NOVEL_BODY.search(classes))
-            self._containers.append((tag, reader, novel))
-            self.reader_container |= reader
-            self.novel_container |= novel
-        if tag == "title":
-            self._in_title = True
-        elif tag in {"h1", "h2", "h3"}:
-            self._heading_level += 1
-            self._heading_parts = []
-        elif tag == "a":
-            self._anchor_href = a.get("href", "")
-            self._anchor_parts = []
-        elif tag == "p":
-            self._paragraph_depth += 1
-            self._paragraph_parts = []
-        elif tag == "script":
-            self._json_ld = a.get("type", "").casefold() == "application/ld+json"
-            self._json_ld_parts = []
-            self._hidden += 1
-        elif tag in {"style", "noscript", "template"}:
-            self._hidden += 1
-        elif tag == "meta":
-            key = (a.get("property") or a.get("name") or "").casefold()
+    def feed(self, html: str, *, parsed_soup: BeautifulSoup | None = None) -> None:
+        soup = parsed_soup if parsed_soup is not None else BeautifulSoup(html[:MAX_HTML_CHARS], "lxml")
+        title = soup.find("title")
+        self.title_parts = [title.get_text(" ", strip=True)[:200]] if title else []
+        self.headings = [
+            _clean(heading.get_text(" ", strip=True), 220)
+            for heading in soup.select("h1, h2, h3")[:12]
+        ]
+        for meta in soup.select("meta"):
+            key = str(meta.get("property") or meta.get("name") or "").casefold()
+            content = str(meta.get("content") or "")
             if key in {"og:title", "twitter:title"} and not self.og_title:
-                self.og_title = _clean(a.get("content", ""))
+                self.og_title = _clean(content)
             if key in {"description", "og:description", "twitter:description"} and not self.description:
-                self.description = _clean(a.get("content", ""), 300)
-        elif tag == "img" and self.reader_images < MAX_IMAGES:
-            source = (a.get("src") or a.get("data-src") or
-                      a.get("data-original") or a.get("data-lazy-src"))
-            if source and not source.startswith(("data:", "javascript:")) and (
-                self._in_reader() or _READER.search(classes)
-                or _PAGE_IMAGE.search(" ".join((classes, a.get("alt", ""), source.rsplit("/", 1)[-1])))
+                self.description = _clean(content, 300)
+
+        for script in soup.select('script[type="application/ld+json"]')[:8]:
+            payload_text = script.get_text()[:MAX_JSON_LD_CHARS]
+            try:
+                self.schema_types.update(_schema_types(cast(object, json.loads(payload_text))))
+            except (ValueError, TypeError, RecursionError):
+                continue
+
+        containers = soup.select("div, section, main, article")
+        self.reader_container = any(_READER.search(self._classes(tag)) for tag in containers)
+        self.novel_container = any(_NOVEL_BODY.search(self._classes(tag)) for tag in containers)
+
+        # Cap accepted reader images, not the first decorative images.
+        # Bound total scanning independently for predictable processing.
+        for image in soup.find_all("img", limit=MAX_SCANNED_IMAGES):
+            if self.reader_images >= MAX_IMAGES:
+                break
+            source = (image.get("src") or image.get("data-src") or
+                      image.get("data-original") or image.get("data-lazy-src"))
+            url = str(source or "")
+            if not url or url.startswith(("data:", "javascript:")):
+                continue
+            own = self._classes(image)
+            context = any(
+                _READER.search(self._classes(parent))
+                for parent in image.parents
+                if parent.name in {"div", "section", "main", "article"}
+            )
+            if context or _READER.search(own) or _PAGE_IMAGE.search(
+                " ".join((own, str(image.get("alt") or ""), url.rsplit("/", 1)[-1]))
             ):
                 self.reader_images += 1
-        elif tag == "video":
-            if (a.get("src") or "controls" in dict(attrs) or
-                    a.get("data-src")):
+
+        for video in soup.select("video"):
+            if video.get("src") or video.has_attr("controls") or video.get("data-src"):
                 self.video_sources += 1
-        elif tag == "source":
-            if a.get("src") and a.get("type", "").casefold().startswith("video/"):
+        for source in soup.select("source[src]"):
+            if str(source.get("type") or "").casefold().startswith("video/"):
                 self.video_sources += 1
-        elif tag == "iframe":
-            src = a.get("src", "")
-            if src and not src.startswith(("javascript:", "data:", "#")) and (
-                "allowfullscreen" in dict(attrs)
-                or "player" in classes.casefold()
-                or "embed" in src.casefold()
+        for iframe in soup.select("iframe[src]"):
+            address = str(iframe.get("src") or "")
+            if address and not address.startswith(("javascript:", "data:", "#")) and (
+                iframe.has_attr("allowfullscreen")
+                or "player" in self._classes(iframe).casefold()
+                or "embed" in address.casefold()
             ):
                 self.iframes += 1
 
-    def handle_data(self, data: str) -> None:  # pyright: ignore[reportImplicitOverride]
-        if self._json_ld:
-            if sum(map(len, self._json_ld_parts)) < MAX_JSON_LD_CHARS:
-                self._json_ld_parts.append(data[:MAX_JSON_LD_CHARS])
-            return
-        if self._hidden:
-            return
-        if self._in_title and len(self.title_parts) < 8:
-            self.title_parts.append(data[:200])
-        if self._heading_level and len(self._heading_parts) < 15:
-            self._heading_parts.append(data[:200])
-        if self._anchor_href and len(self._anchor_parts) < 8:
-            self._anchor_parts.append(data[:140])
-        if self._paragraph_depth and len(self._paragraph_parts) < 100:
-            self._paragraph_parts.append(data[:3000])
-        if len(self.body_text_samples) < 30 and data.strip():
-            self.body_text_samples.append(data[:150])
-
-    def handle_endtag(self, tag: str) -> None:  # pyright: ignore[reportImplicitOverride]
-        if tag == "title":
-            self._in_title = False
-        elif tag in {"h1", "h2", "h3"} and self._heading_level:
-            heading = _clean(" ".join(self._heading_parts), 220)
-            if heading and len(self.headings) < 12:
-                self.headings.append(heading)
-            self._heading_level -= 1
-            self._heading_parts = []
-        elif tag == "a" and self._anchor_href:
-            self._record_link(self._anchor_href, " ".join(self._anchor_parts))
-            self._anchor_href = ""
-            self._anchor_parts = []
-        elif tag == "p" and self._paragraph_depth:
-            paragraph = _clean(" ".join(self._paragraph_parts), 6000)
-            if len(paragraph) >= 50:
+        for link in soup.find_all("a", href=True, limit=MAX_SCANNED_LINKS):
+            if len(self.link_targets) >= MAX_LINKS:
+                break
+            self._record_link(str(link.get("href") or ""),
+                              link.get_text(" ", strip=True)[:300])
+        for paragraph in soup.find_all("p", limit=300):
+            if paragraph.find_parent(["script", "style", "noscript", "template"]):
+                continue
+            text = _clean(paragraph.get_text(" ", strip=True), 6000)
+            if len(text) >= 50:
                 self.novel_paragraphs += 1
-                self.novel_chars += len(paragraph)
-            self._paragraph_depth -= 1
-            self._paragraph_parts = []
-        elif tag == "script":
-            if self._json_ld and self._json_ld_parts:
-                try:
-                    payload = cast(object, json.loads(
-                        "".join(self._json_ld_parts)[:MAX_JSON_LD_CHARS]
-                    ))
-                    self.schema_types.update(_schema_types(payload))
-                except (ValueError, TypeError, RecursionError):
-                    pass
-            self._json_ld = False
-            self._json_ld_parts = []
-            self._hidden = max(0, self._hidden - 1)
-        elif tag in {"style", "noscript", "template"}:
-            self._hidden = max(0, self._hidden - 1)
-        elif tag in {"div", "section", "main", "article"}:
-            for index in range(len(self._containers) - 1, -1, -1):
-                if self._containers[index][0] == tag:
-                    del self._containers[index:]
+                self.novel_chars += len(text)
+
+        body = soup.find("body")
+        if body is not None:
+            for string in body.descendants:
+                if len(self.body_text_samples) >= 30:
                     break
+                if not isinstance(string, NavigableString) or string.find_parent(
+                    ["script", "style", "noscript", "template"]
+                ):
+                    continue
+                if str(string).strip():
+                    self.body_text_samples.append(str(string)[:150])
 
     def _record_link(self, href: str, label: str) -> None:
         if len(self.link_targets) >= MAX_LINKS:
@@ -304,11 +271,9 @@ class _ContentParser(HTMLParser):
             return
         this = urlsplit(self.page_url)
         path = unquote(target.path)
-        # The anchor must name actual chapter/episode navigation, not a topical
-        # URL alone. The label can establish this for opaque numeric routes.
         if not _CHAPTER.search(path + " " + label):
             return
-        if (target.path == this.path and target.query == this.query):
+        if target.path == this.path and target.query == this.query:
             return
         self.link_targets.add(target.path + "?" + target.query)
 
@@ -323,6 +288,7 @@ def verify_content_page(
     page_url: str,
     *,
     homepage_categories: tuple[str, ...] = (),
+    parsed_soup: BeautifulSoup | None = None,
 ) -> ContentVerificationResult:
     """Require onsite content semantics, not topical metadata or URL shape.
 
@@ -335,7 +301,7 @@ def verify_content_page(
     if parsed_url.scheme not in {"https", "http"} or not parsed_url.hostname:
         return ContentVerificationResult(False, ("invalid_url",), "", (), (), ("invalid_url",))
     parser = _ContentParser(page_url)
-    parser.feed(html[:MAX_HTML_CHARS])
+    parser.feed(html[:MAX_HTML_CHARS], parsed_soup=parsed_soup)
     title = parser.title
     prominent = " ".join((title, parser.og_title, parser.description, *parser.headings))
     categories = _categories(prominent) | (set(homepage_categories) & _SUPPORTED)
@@ -419,11 +385,14 @@ def verify_content_page(
     hard_veto = negatives & {
         "listing_or_search_route", "commerce_page", "editorial_page",
         "homepage_route", "missing_or_error_title", "no_supported_genre",
-        "commercial_action",
     }
     if "commercial_action" in negatives and (
         "commerce_page" in negatives or "product" in types
+        or bool(_PRODUCT_ACTION.search(title))
+        or any(_PRODUCT_ACTION.search(heading) for heading in parser.headings)
     ):
+        # Prominent purchase calls veto products; incidental shop banners
+        # within a real reader remain only diagnostic.
         hard_veto.add("commerce_page")
     verified = bool(content_code) and not hard_veto
     if not content_code:

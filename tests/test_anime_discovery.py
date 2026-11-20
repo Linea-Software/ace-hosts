@@ -274,16 +274,18 @@ def test_catalog_homepage_and_eight_pages_qualify_without_joined(host: str) -> N
     paths = cast(list[dict[str, object]], row["eligibility_paths"])
     assert [path["path_code"] for path in paths] == [
         "independent-catalogs", "catalog-joined-homepage",
-        "catalog-verified-content", "web-original",
+        "catalog-verified-content", "catalog-verified-pages", "web-original",
     ]
     qualified = [path for path in paths if path["qualified"] is True]
-    assert [path["path_code"] for path in qualified] == ["catalog-verified-content"]
+    assert [path["path_code"] for path in qualified] == [
+        "catalog-verified-content", "catalog-verified-pages"
+    ]
     required = cast(list[dict[str, object]], qualified[0]["required_checks"])
     assert all(check["required"] is True and check["passed"] is True for check in required)
     assert qualified[0]["path_gaps"] == []
     assert "joined_list_match" in cast(list[str], paths[1]["path_gaps"])
     assert "two_independent_catalog_families" in cast(list[str], paths[0]["path_gaps"])
-    assert "no_catalog_family" in cast(list[str], paths[3]["path_gaps"])
+    assert "no_catalog_family" in cast(list[str], paths[4]["path_gaps"])
     # Changes in evidence enumeration cannot affect the diagnostic path/gaps.
     reversed_ledger, _ = discovery.classify(list(reversed(records)), set(), set(), set(), set())
     assert reversed_ledger[0]["eligibility_path"] == row["eligibility_path"]

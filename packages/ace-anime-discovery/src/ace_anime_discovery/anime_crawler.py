@@ -3,7 +3,8 @@
 The SQLite state is an untrusted collection of leads. Only independently
 verified, maintainer-approved proposals can reach the release pipeline.
 All network traffic is HTTPS to pinned, DNS-validated public addresses;
-redirects, proxies, authentication and access-control bypass are forbidden.
+cross-host redirects become fresh, robots-checked leads; proxies, authentication
+and access-control bypass are forbidden.
 """
 from __future__ import annotations
 
@@ -26,11 +27,12 @@ from collections import Counter
 from collections.abc import Callable, Collection, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import cast
 from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
+
+from bs4 import BeautifulSoup
 
 from ace_anime_discovery.anime_browser import BrowserRenderer
 from ace_anime_discovery.anime_content_verification import (
@@ -65,6 +67,11 @@ MAX_HTML = 650_000
 MAX_ROBOTS = 100_000
 MAX_LINKS_PER_PAGE = 75
 MAX_ANCHORS_PER_PAGE = 3200
+OPAQUE_CONTENT_ANCHOR = re.compile(
+    r"\b(?:read|watch|chapters?|episodes?|manga|manhwa|manhua|webtoon|"
+    + r"novels?|scanlation|capitoli?|chapitres?)\b|第\s*\d+\s*[話话章回]",
+    re.IGNORECASE,
+)
 # Do not treat access-denied and error pages as content verification.
 EMPTY_PAGE_TITLE = re.compile(
     r"^(?:404|403|not found|access denied|just a moment|error|"
@@ -86,38 +93,29 @@ def missing_robots_html(body: bytes) -> bool:
     return bool(title and MISSING_ROBOTS_TITLE.search(title.group(1)))
 
 
-class LinkCollector(HTMLParser):
-    """Inspect bounded anchor text so navigation links don't monopolize leads."""
+class LinkCollector:
+    """Collect capped anchor targets and visible labels from parsed HTML."""
 
     def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
         self.links: list[tuple[str, str]] = []
-        self._href: str = ""
-        self._label: list[str] = []
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # pyright: ignore[reportImplicitOverride]
-        if tag == "a" and len(self.links) < MAX_ANCHORS_PER_PAGE:
-            self._href = (dict(attrs).get("href") or "")[:2048]
-            self._label = []
-
-    def handle_data(self, data: str) -> None:  # pyright: ignore[reportImplicitOverride]
-        if self._href and len(self._label) < 5:
-            self._label.append(data[:100])
-
-    def handle_endtag(self, tag: str) -> None:  # pyright: ignore[reportImplicitOverride]
-        if tag == "a" and self._href:
-            self.links.append((self._href, " ".join(self._label)[:250]))
-            self._href = ""
-            self._label = []
+    def feed(self, html: str, *, parsed_soup: BeautifulSoup | None = None) -> None:
+        soup = parsed_soup if parsed_soup is not None else BeautifulSoup(html[:MAX_HTML], "lxml")
+        self.links = [
+            (str(link.get("href") or "")[:2048], link.get_text(" ", strip=True)[:250])
+            for link in soup.find_all("a", href=True, limit=MAX_ANCHORS_PER_PAGE)
+        ]
 
 
 def ranked_links(html: str, page_url: str, limit: int = MAX_LINKS_PER_PAGE, *,
-                 allow_generic_external: bool = False) -> tuple[str, ...]:
+                 allow_generic_external: bool = False,
+                 allow_opaque_internal: bool = False,
+                 parsed_soup: BeautifulSoup | None = None) -> tuple[str, ...]:
     """Follow topical links; bound generic outbound links to trusted directories."""
     if limit <= 0:
         return ()
     collector = LinkCollector()
-    collector.feed(html)
+    collector.feed(html, parsed_soup=parsed_soup)
     host = urlsplit(page_url).hostname
     scores: dict[str, int] = {}
     for href, label in collector.links:
@@ -129,10 +127,17 @@ def ranked_links(html: str, page_url: str, limit: int = MAX_LINKS_PER_PAGE, *,
             continue
         thematic = bool(site_categories(unquote(url) + " " + label))
         if target == host:
-            if not (site_categories(unquote(urlsplit(url).path))
-                    or content_page_path(urlsplit(url).path)):
+            recognized = bool(site_categories(unquote(urlsplit(url).path))
+                              or content_page_path(urlsplit(url).path))
+            if recognized:
+                score = 45 + (25 if thematic else 0)
+            elif (allow_opaque_internal and urlsplit(url).path != "/"
+                  and OPAQUE_CONTENT_ANCHOR.search(label)):
+                # Unknown CMS routes are leads, not proof. Allow only a small
+                # number per verified topical homepage to limit request cost.
+                score = 30
+            else:
                 continue
-            score = 45 + (25 if thematic else 0)
         else:
             if not thematic and not allow_generic_external:
                 # A random link from an unverified homepage must not trigger
@@ -144,7 +149,12 @@ def ranked_links(html: str, page_url: str, limit: int = MAX_LINKS_PER_PAGE, *,
     # Allow only a handful of generic links on explicitly seeded directories.
     result: list[str] = []
     generic = 0
+    opaque = 0
     for url, score in ranked:
+        if score == 30:
+            if opaque >= 6:
+                continue
+            opaque += 1
         if score == 20:
             if generic >= 5:
                 continue
@@ -198,6 +208,7 @@ class PageResponse:
     status: int
     content_type: str
     body: bytes
+    location: str = ""
 
 
 class RequestBudget:
@@ -259,7 +270,10 @@ def safe_get(url: str, budget: RequestBudget, *, timeout: float = 5,
         data = response.read(max_bytes + 1)
         if len(data) > max_bytes:
             raise ValueError("response exceeded byte limit")
-        return PageResponse(response.status, response.headers.get("content-type", ""), data)
+        return PageResponse(
+            response.status, response.headers.get("content-type", ""), data,
+            response.headers.get("location", "")[:2048],
+        )
     finally:
         connection.close()
 
@@ -309,6 +323,8 @@ _DISCOVERY_SOURCE_CLASSES = (
 
 
 def _scheduler_source_class(source: str) -> str:
+    if source == "verification-homepage":
+        return "verification-homepage"
     if source == "catalog":
         return "catalog"
     if source == "joined-candidate":
@@ -500,7 +516,8 @@ class Frontier:
         # keyset rotation prevents a large catalog batch from hiding joined
         # or search leads behind one alphabetically ordered backlog.
         source_sql = (
-            "CASE WHEN source='catalog' THEN 'catalog' "
+            "CASE WHEN source='verification-homepage' THEN 'verification-homepage' "
+            + "WHEN source='catalog' THEN 'catalog' "
             + "WHEN source='joined-candidate' THEN 'joined-candidate' "
             + "WHEN source LIKE 'brave-search:%' THEN 'brave-search' "
             + "WHEN source LIKE 'outbound:%' THEN 'outbound' "
@@ -649,6 +666,60 @@ class Frontier:
                  time.time()),
             )
 
+    def prioritize_homepage(self, host: str, *, now: float | None = None) -> bool:
+        """Queue a missing homepage for content-backed human review.
+
+        A recently completed/rejected homepage is not retried early. Newly
+        queued homepage checks can exceed the per-run internal-page quota by
+        one, but remain subject to robots, network budgets and policy.
+        """
+        if not safe_hostname(host):
+            return False
+        if self.conn.execute(
+            "SELECT 1 FROM evidence WHERE host=? AND repository='site-homepage' LIMIT 1",
+            (host,),
+        ).fetchone():
+            return False
+        url = f"https://{host}/"
+        checked = time.time() if now is None else now
+        row = cast(tuple[str, float] | None, self.conn.execute(
+            "SELECT status,next_check FROM frontier WHERE url=?", (url,),
+        ).fetchone())
+        if row is not None:
+            status, next_check = row
+            # Never accelerate failed robots checks or completed visits
+            # before their existing retry backoff expires.
+            if status == "inflight" or (
+                status != "pending" and next_check > checked
+            ):
+                return False
+            with self.conn:
+                self.conn.execute(
+                    "UPDATE frontier SET status='pending',source='verification-homepage',"
+                    + "priority=MAX(priority,95),next_check=0,error='' WHERE url=?",
+                    (url,),
+                )
+            return True
+        return self.add(url, depth=0, source="verification-homepage", priority=95)
+
+    def prioritize_promising_homepages(self, *, limit: int = 128) -> int:
+        """Resume missing homepage checks for sites with two verified pages."""
+        if limit <= 0:
+            return 0
+        hosts = cast(list[tuple[str]], self.conn.execute(
+            "SELECT host FROM evidence WHERE repository='site-internal-page' "
+            + "AND field='verified-content-page' GROUP BY host "
+            + "HAVING COUNT(DISTINCT origin)>=2 ORDER BY host LIMIT ?",
+            (limit * 4,),
+        ).fetchall())
+        selected = 0
+        for (host,) in hosts:
+            if self.prioritize_homepage(host):
+                selected += 1
+                if selected >= limit:
+                    break
+        return selected
+
     def clear_homepage_evidence(self, host: str) -> None:
         """Successful rechecks replace old homepage classifications."""
         with self.conn:
@@ -697,9 +768,9 @@ class Frontier:
             FROM frontier_schedule AS s
             JOIN frontier AS f ON f.url=s.url
             WHERE s.lane=?
-              AND NOT EXISTS(
+              AND (s.source_class='verification-homepage' OR NOT EXISTS(
                   SELECT 1 FROM exhausted_hosts AS e WHERE e.host=s.host
-              )
+              ))
               AND NOT EXISTS(
                   SELECT 1 FROM claimed_batch AS b WHERE b.host=s.host
               )
@@ -751,11 +822,15 @@ class Frontier:
                         host_cursor = cast(tuple[str] | None, self.conn.execute(
                             "SELECT last_host FROM frontier_scheduler_cursor WHERE lane=0"
                         ).fetchone())
-                        if host_cursor is not None and not host_cursor[0]:
-                            # Preserve the highest-priority first homepage.
+                        # Complete promising sites before discovering further
+                        # low-confidence joined-list domains. These homepages
+                        # may exceed the normal internal-page per-host quota.
+                        candidate = self._next_scheduled_row(
+                            lane, now, source_class="verification-homepage"
+                        )
+                        if candidate is None and host_cursor is not None and not host_cursor[0]:
                             candidate = self._next_scheduled_row(lane, now)
-                        else:
-                            candidate = None
+                        if candidate is None:
                             for source_offset in range(len(_DISCOVERY_SOURCE_CLASSES)):
                                 group = _DISCOVERY_SOURCE_CLASSES[
                                     (source_turn + source_offset)
@@ -792,9 +867,10 @@ class Frontier:
                 )
                 if lane == 0:
                     source_class = _scheduler_source_class(source)
-                    source_turn = (
-                        _DISCOVERY_SOURCE_CLASSES.index(source_class) + 1
-                    ) % len(_DISCOVERY_SOURCE_CLASSES)
+                    if source_class in _DISCOVERY_SOURCE_CLASSES:
+                        source_turn = (
+                            _DISCOVERY_SOURCE_CLASSES.index(source_class) + 1
+                        ) % len(_DISCOVERY_SOURCE_CLASSES)
                 turn = (lane + 1) % 4
             self.conn.execute(
                 "INSERT INTO run_state(key,value) VALUES('frontier_scheduler_turn',?) "
@@ -929,6 +1005,7 @@ class InspectedPage:
     error: str = ""
     needs_browser: bool = False
     content_verification: ContentVerificationResult | None = None
+    redirect_target: str | None = None
 
 
 class WebCrawler:
@@ -955,6 +1032,7 @@ class WebCrawler:
         self._run_host_sources: dict[str, set[str]] = {}
         self._run_attempted_hosts: set[str] = set()
         self._run_homepage_fetched: set[str] = set()
+        self._run_attempted_homepages: set[str] = set()
         self._run_homepage_matched: set[str] = set()
         self._run_content_verified: set[str] = set()
         self._homepage_categories: dict[str, tuple[str, ...]] = {}
@@ -1223,7 +1301,35 @@ class WebCrawler:
                       else self._robots_failures.get(host, "robots denied or unavailable"))
             return InspectedPage(page, "", (), (), (), (), reason)
         try:
-            response = self._request(page.url)
+            effective_url = page.url
+            response = self._request(effective_url)
+            seen_redirects = {effective_url}
+            # Same-origin HTTPS redirects can be checked under the current
+            # robots policy. Cross-origin redirects become independent leads
+            # and must pass their own robots and DNS guards on the next visit.
+            for _ in range(3):
+                if response.status not in (301, 302, 307, 308):
+                    break
+                target = normalize_url(urljoin(effective_url, response.location)) if response.location else None
+                if not target or not public_crawl_url(target):
+                    return InspectedPage(page, "", (), (), (), (), "unsafe-redirect")
+                target_host = urlsplit(target).hostname
+                if target_host != host:
+                    if not target_host or not safe_hostname(target_host):
+                        return InspectedPage(page, "", (), (), (), (), "unsafe-redirect")
+                    return InspectedPage(
+                        page, "", (), (), (), (), "redirect-other-host",
+                        redirect_target=f"https://{target_host}/",
+                    )
+                if target in seen_redirects:
+                    return InspectedPage(page, "", (), (), (), (), "redirect-loop")
+                if not self._allowed(target):
+                    return InspectedPage(page, "", (), (), (), (), "redirect-robots-denied")
+                seen_redirects.add(target)
+                effective_url = target
+                response = self._request(effective_url)
+            if response.status in (301, 302, 307, 308):
+                return InspectedPage(page, "", (), (), (), (), "redirect-limit")
             if response.status in (401, 403, 429):
                 return InspectedPage(page, "", (), (), (), (), "access denied")
             if response.status != 200:
@@ -1231,19 +1337,22 @@ class WebCrawler:
             if "html" not in response.content_type.lower():
                 return InspectedPage(page, "", (), (), (), (), "not HTML")
             text = response.body.decode("utf-8", "replace")
+            parser = SitePage()
+            parser.feed(text)
             verification = (
                 verify_content_page(
-                    text, page.url,
+                    text, effective_url,
                     homepage_categories=self._homepage_categories.get(host, ()),
+                    parsed_soup=parser.soup,
                 )
                 if page.url != f"https://{host}/" and page.kind != "directory"
                 else None
             )
-            parser = SitePage()
-            parser.feed(text)
             categories = site_categories(parser.topic_text)
             links = ranked_links(
-                text, page.url, allow_generic_external=page.kind == "directory"
+                text, effective_url, allow_generic_external=page.kind == "directory",
+                allow_opaque_internal=bool(categories),
+                parsed_soup=parser.soup,
             )
             if page.source == "joined-candidate":
                 # A broad community blocklist is not reliable evidence on its
@@ -1295,6 +1404,8 @@ class WebCrawler:
         page = data.page
         host = urlsplit(page.url).hostname or ""
         self._run_attempted_hosts.add(host)
+        if page.url == f"https://{host}/":
+            self._run_attempted_homepages.add(host)
         self._run_host_sources.setdefault(host, set()).add(source_group(page.source))
         page_type = ("directory" if page.kind == "directory" else
                      "homepage" if page.url == f"https://{host}/" else "content")
@@ -1310,6 +1421,13 @@ class WebCrawler:
                 sum(self.errors.values()),
             )
         if data.error:
+            if data.redirect_target and page.depth < self.config.max_depth:
+                target = normalize_url(data.redirect_target)
+                if target and public_crawl_url(target):
+                    self.frontier.add(
+                        target, depth=page.depth + 1,
+                        source="redirect:" + host, priority=85,
+                    )
             self._run_outcomes[data.error] += 1
             self.report.record_page(
                 host, source_group(page.source), page_type, data.error,
@@ -1396,6 +1514,8 @@ class WebCrawler:
                     host, title or None, category, languages, repository, None,
                     "web-lead", method, origin=page.url,
                 ))
+        if structured_content and host not in self._run_attempted_homepages:
+            self.frontier.prioritize_homepage(host)
         for loc in data.sitemap_paths:
             self.frontier.add(loc, depth=page.depth + 1,
                               source="sitemap:" + host, priority=25)
@@ -1411,7 +1531,8 @@ class WebCrawler:
                 continue
             if target == host:
                 if (site_categories(unquote(urlsplit(url).path))
-                        or content_page_path(urlsplit(url).path)):
+                        or content_page_path(urlsplit(url).path)
+                        or (categories and url in data.links)):
                     self.frontier.add(url, depth=page.depth + 1, source="internal:" + host,
                                       priority=75)
             elif safe_hostname(target):
@@ -1426,6 +1547,9 @@ class WebCrawler:
 
     def run(self) -> dict[str, object]:
         browser = BrowserRenderer(max_sites=self.config.max_browser) if self.config.max_browser else None
+        completion_queued = self.frontier.prioritize_promising_homepages()
+        if completion_queued:
+            logger.info("crawl completion: prioritized %d missing homepages", completion_queued)
         logger.info("crawl started: workers=%d request_limit=%d time_limit=%.0fs",
                     self.config.concurrency, self.config.max_requests, self.config.max_seconds)
         try:

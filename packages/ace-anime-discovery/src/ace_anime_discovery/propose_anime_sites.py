@@ -85,20 +85,25 @@ def propose_sites(
             # Revalidate direct evidence here: candidates.jsonl is untrusted
             # input and an eligibility_path label is never authorization alone.
             multi_page_verified = (
-                scraped and row.get("review_eligible") is True
+                row.get("review_eligible") is True
                 and len(content_urls) >= 2
                 and type(row.get("onsite_distinct_titles")) is int
                 and cast(int, row["onsite_distinct_titles"]) >= 2
                 and any(key.startswith("site-internal-page:") for key in scrapes)
             )
             web_original = (
-                families == 0 and multi_page_verified
+                families == 0 and scraped and multi_page_verified
                 and row.get("verification_method") == "multi-page-website"
             )
             catalog_verified = (
                 families >= 1 and multi_page_verified
                 and row.get("verification_method") == "catalog-and-verified-pages"
-                and row.get("eligibility_path") == "catalog-verified-content"
+                and (
+                    row.get("eligibility_path") == "catalog-verified-content"
+                    and scraped
+                    or row.get("eligibility_path") == "catalog-verified-pages"
+                    and "site-internal-page:verified-content-page" in scrapes
+                )
             )
             if (families >= 2 or (families >= 1 and joined and scraped)
                     or catalog_verified or web_original):

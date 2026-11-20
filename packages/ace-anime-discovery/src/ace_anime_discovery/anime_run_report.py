@@ -412,6 +412,48 @@ def finalize_run_report(path: Path, *,
         raw_diagnostics = report.get("diagnostics")
         diagnostics = (cast(dict[str, object], raw_diagnostics)
                        if isinstance(raw_diagnostics, dict) else {})
+        # Distinguish missing homepage visits from negative inspection. This
+        # diagnoses incomplete promising sites without storing fetched URLs or
+        # untrusted page text in the report.
+        homepage_outcomes: dict[str, set[str]] = {}
+        for host, outcome in cast(list[tuple[str, str]], db.execute(
+            "SELECT hostname,outcome FROM page_events WHERE page_type='homepage'"
+        ).fetchall()):
+            homepage_outcomes.setdefault(host, set()).add(outcome)
+        homepage_checks: dict[str, int] = {
+            "not_inspected_this_run": 0,
+            "inspected_not_topical": 0,
+            "inspected_but_unreachable": 0,
+        }
+        for row in rows:
+            if (row.get("status") != "review"
+                    or not isinstance(row.get("hostname"), str)
+                    or type(row.get("independent_families")) is not int
+                    or cast(int, row["independent_families"]) < 1
+                    or type(row.get("onsite_content_pages")) is not int
+                    or cast(int, row["onsite_content_pages"]) < 2):
+                continue
+            evidence = row.get("evidence")
+            if (isinstance(evidence, list) and
+                    any(isinstance(item, str) and item.startswith("site-homepage:")
+                        for item in cast(list[object], evidence))):
+                continue
+            outcomes = homepage_outcomes.get(cast(str, row["hostname"]), set())
+            key = ("not_inspected_this_run" if not outcomes
+                   else "inspected_not_topical" if "homepage_unverified" in outcomes
+                   else "inspected_but_unreachable")
+            homepage_checks[key] += 1
+        topical = {
+            host for host, outcomes in homepage_outcomes.items()
+            if "homepage_topical" in outcomes
+        }
+        internal = {
+            host for (host,) in cast(list[tuple[str]], db.execute(
+                "SELECT DISTINCT hostname FROM page_events WHERE page_type='content'"
+            ).fetchall())
+        }
+        diagnostics["promising_missing_homepage"] = homepage_checks
+        diagnostics["topical_homepages_without_content_inspection"] = len(topical - internal)
         raw_yields = diagnostics.get("source_yield_current_run")
         yields = (cast(dict[str, object], raw_yields)
                   if isinstance(raw_yields, dict) else {})
