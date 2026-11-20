@@ -58,10 +58,16 @@ def test_crawler_discovers_unlisted_reader_and_verifies_actual_pages(
             ).encode())
         if url == f"https://{host}/series/one-piece":
             return PageResponse(200, "text/html",
-                                b"<title>One Piece - Chapter 100</title>")
+                                b"<title>One Piece - Chapter 100</title>"
+                                + b'<div class="chapter-reader">'
+                                + b'<img src="/pages/1.jpg"><img src="/pages/2.jpg">'
+                                + b'</div>')
         if url == f"https://{host}/series/naruto":
             return PageResponse(200, "text/html",
-                                b"<title>Naruto - Chapter 90</title>")
+                                b"<title>Naruto - Chapter 90</title>"
+                                + b'<div class="chapter-reader">'
+                                + b'<img src="/pages/a.jpg"><img src="/pages/b.jpg">'
+                                + b'</div>')
         return PageResponse(404, "text/plain", b"")
 
     web = WebCrawler(

@@ -43,6 +43,18 @@ MAX_DIRECTORY_LINKS = 400
 MAX_HTML_BYTES = 1_000_000
 MAX_SITEMAP_URLS = 400
 MIN_INDEPENDENT_FAMILIES = 2
+# Stable, ordered review-path and check identifiers. Do not change meanings.
+ELIGIBILITY_PATH_REQUIREMENTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("independent-catalogs", ("policy_allowed", "two_independent_catalog_families")),
+    ("catalog-joined-homepage", ("policy_allowed", "independent_catalog_family",
+                                 "joined_list_match", "topical_homepage")),
+    ("catalog-verified-content", ("policy_allowed", "independent_catalog_family",
+                                  "topical_homepage", "two_verified_content_pages",
+                                  "two_distinct_content_titles")),
+    ("web-original", ("policy_allowed", "no_catalog_family", "web_discovery_lead",
+                      "topical_homepage", "two_verified_content_pages",
+                      "two_distinct_content_titles")),
+)
 CATEGORY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # Reject embedded substrings (e.g. Bucaramanga, Mangaluru, animation).
     ("anime", re.compile(r"(?<![a-z])animes?(?![a-z])|アニメ|动漫|動畫|애니메이션|аниме|أنمي|انمي", re.IGNORECASE)),
@@ -673,6 +685,27 @@ def scrape_catalog_sites(session: requests.Session, records: list[Evidence], joi
     return scraped
 
 
+def _eligibility_paths(checks: dict[str, bool]) -> tuple[str, list[dict[str, object]]]:
+    """Evaluate all review paths and retain each required check and gap."""
+    selected = "none"
+    paths: list[dict[str, object]] = []
+    for path_code, required in ELIGIBILITY_PATH_REQUIREMENTS:
+        gaps = [check for check in required if not checks[check]]
+        qualified = not gaps
+        if qualified and selected == "none":
+            selected = path_code
+        paths.append({
+            "path_code": path_code,
+            "qualified": qualified,
+            "required_checks": [
+                {"check_code": check, "required": True, "passed": checks[check]}
+                for check in required
+            ],
+            "path_gaps": gaps,
+        })
+    return selected, paths
+
+
 def classify(records: list[Evidence], joined: set[str], pro: set[str],
              allowed: set[str], excluded: set[str]) -> tuple[list[dict[str, object]], set[str]]:
     """Separate discovery confidence from approval for public release.
@@ -692,45 +725,61 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
                     if record.family not in {"derived", "web-lead"}}
         site_checks = {record.field for record in evidence
                        if record.repository == "site-homepage"
+                       and record.field in {"html-title-description", "html-rendered"}
                        and record.category in CONTENT_TYPES}
         web_leads = {record.repository for record in evidence
                      if record.repository in {"web-link", "web-directory", "brave-search",
                                               "site-outbound", "joined-candidate"}}
         website_observed = bool(site_checks and web_leads)
-        # The crawler records these only after a successful HTML fetch. URL
-        # paths must be concrete content routes and stay on the exact host.
-        onsite_pages = sorted({
-            f"https://{host}{urlsplit(record.origin).path}"
-            for record in evidence
-            if record.repository == "site-internal-page"
-            and record.field in {
-                "html-title-description", "html-rendered", "structured-content-page"
-            }
-            and record.origin is not None
-            and urlsplit(record.origin).scheme == "https"
-            and urlsplit(record.origin).hostname == host
-            and content_page_path(urlsplit(record.origin).path)
-        })
-        onsite_titles = {
-            record.name.strip().casefold() for record in evidence
-            if record.repository == "site-internal-page"
-            and record.origin is not None
-            and record.name is not None
-            and len(record.name.strip()) >= 8
-            and urlsplit(record.origin).scheme == "https"
-            and urlsplit(record.origin).hostname == host
-            and content_page_path(urlsplit(record.origin).path)
+        # Trust only evidence produced after an actual HTML inspection.
+        # The new structural verifier also recognizes opaque/locale-prefixed
+        # paths; older evidence fields still require a recognized content URL.
+        # Count at most one distinct title per canonical same-host page, so
+        # duplicate titles on one URL cannot manufacture multi-page proof.
+        verified_pages: dict[str, set[str]] = {}
+        for record in evidence:
+            if (record.repository != "site-internal-page"
+                    or record.origin is None or record.field not in {
+                        "html-title-description", "html-rendered",
+                        "structured-content-page", "verified-content-page",
+                    }):
+                continue
+            url = urlsplit(record.origin)
+            if (url.scheme != "https" or url.hostname != host
+                    or url.path == "/" or not (
+                        record.field == "verified-content-page"
+                        or content_page_path(url.path)
+                    )):
+                continue
+            canonical = f"https://{host}{url.path}"
+            page_titles = verified_pages.setdefault(canonical, set())
+            if record.name and len(record.name.strip()) >= 8:
+                page_titles.add(record.name.strip().casefold())
+        onsite_pages = sorted(verified_pages)
+        onsite_titles = {min(titles) for titles in verified_pages.values() if titles}
+        # Every review path is gated by policy before it can qualify.
+        rejected = host in excluded or not safe_hostname(host)
+        checks = {
+            "policy_allowed": not rejected,
+            "two_independent_catalog_families": len(families) >= MIN_INDEPENDENT_FAMILIES,
+            "independent_catalog_family": bool(families),
+            "joined_list_match": host in joined,
+            "topical_homepage": bool(site_checks),
+            "two_verified_content_pages": len(onsite_pages) >= 2,
+            "two_distinct_content_titles": len(onsite_titles) >= 2,
+            "no_catalog_family": not families,
+            "web_discovery_lead": bool(web_leads),
         }
-        web_original = (
-            website_observed and not families
-            and len(onsite_pages) >= 2 and len(onsite_titles) >= 2
-        )
+        eligibility_path, eligibility_paths = _eligibility_paths(checks)
+        qualified_paths = {
+            str(path["path_code"]) for path in eligibility_paths
+            if path["qualified"] is True
+        }
+        catalog_verified = "catalog-verified-content" in qualified_paths
+        web_original = "web-original" in qualified_paths
         confirmed = len(families) >= MIN_INDEPENDENT_FAMILIES
         catalog_and_site = bool(families and site_checks and host in joined)
         trusted = host in pro or host in allowed or confirmed
-        # The optional approval file allows explicitly reviewed hosts; never
-        # allow it to override the global whitelist or shared-host safeguards.
-        rejected = host in excluded or not safe_hostname(host)
         status = ("excluded" if rejected else "pro" if host in pro else
                   "validated-candidate" if trusted else
                   "website-verified" if web_original else "review")
@@ -747,6 +796,7 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
             "repositories": sorted({v.repository for v in evidence}),
             "discovery_sources": sorted({v.origin for v in evidence if v.origin})[:15],
             "verification_method": ("independent-catalogs" if confirmed else
+                                    "catalog-and-verified-pages" if catalog_verified else
                                     "multi-page-website" if web_original else
                                     "website-observed" if website_observed else
                                     "unverified-lead"),
@@ -758,10 +808,13 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
                                 else "present in curated Pro" if host in pro
                                 else "merged maintainer-approved seed" if host in allowed
                                 else "corroborated by independent catalog families" if confirmed
+                                else "catalog, homepage and distinct verified content pages" if catalog_verified
                                 else "homepage and two fetched, distinct content pages" if web_original
                                 else "homepage topic alone cannot verify a site" if website_observed
                                 else "insufficient content verification"),
-            "review_eligible": not rejected and (confirmed or catalog_and_site or web_original),
+            "review_eligible": eligibility_path != "none",
+            "eligibility_path": eligibility_path,
+            "eligibility_paths": eligibility_paths,
             "extension_ids": sorted({f"{v.repository}:{v.extension_id}" for v in evidence if v.extension_id}),
             "evidence": sorted({f"{v.repository}:{v.field}" for v in evidence}),
             "licenses": sorted({v.license for v in evidence if v.license is not None}),
@@ -771,6 +824,7 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
                           95 if host in allowed else
                           90 if len(families) >= 2 and host in joined else
                           80 if len(families) >= 2 else
+                          85 if catalog_verified else
                           75 if web_original else
                           60 if catalog_and_site else
                           35 if website_observed else 30,
@@ -785,6 +839,7 @@ def classify(records: list[Evidence], joined: set[str], pro: set[str],
             "repositories": ["maintainer-reviewed"], "discovery_sources": [],
             "verification_method": "maintainer-reviewed", "review_eligible": False,
             "release_approved": not rejected,
+            "eligibility_path": "none", "eligibility_paths": [],
             "decision_reason": ("excluded by maintainer policy or infrastructure rule"
                                 if rejected else "merged maintainer-approved seed"),
             "extension_ids": [],

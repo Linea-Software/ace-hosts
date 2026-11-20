@@ -347,7 +347,9 @@ def test_article_page_cannot_verify_generic_news_homepage(tmp_path: Path) -> Non
         web.seed_joined([host])
         web.run()
         evidence = web.frontier.records()
-        assert any(item.repository == "site-internal-page" for item in evidence)
+        # The old path/title heuristic emitted misleading internal evidence.
+        # A news article without reader/viewer structure must now fail closed.
+        assert not any(item.repository == "site-internal-page" for item in evidence)
         assert not any(item.repository == "site-homepage" for item in evidence)
         ledger, approved = classify(evidence, {host}, set(), set(), set())
         assert ledger[0]["review_eligible"] is False
@@ -443,3 +445,56 @@ def test_legacy_evidence_with_unknown_age_is_not_fresh(tmp_path: Path) -> None:
         assert len(migrated.records()) == 1
     finally:
         migrated.close()
+
+
+def test_sources_receive_fair_homepage_slots_with_adversarial_hostnames(
+    tmp_path: Path,
+) -> None:
+    """A huge alphabetically early catalog cannot starve late joined leads."""
+    frontier = Frontier(tmp_path / "source-fairness.sqlite")
+    try:
+        for i in range(40):
+            assert frontier.add(
+                f"https://a-catalog-{i:03d}.example.org/", depth=0,
+                source="catalog", priority=65,
+            )
+        for i in range(40):
+            assert frontier.add(
+                f"https://z-joined-{i:03d}.example.org/", depth=0,
+                source="joined-candidate", priority=10,
+            )
+        selected = [frontier.claim(1, 1)[0] for _ in range(10)]
+        sources = [page.source for page in selected]
+        assert sources[0] == "catalog"  # Initial priority is honored.
+        assert sources.count("catalog") >= 3
+        assert sources.count("joined-candidate") >= 3
+        assert all(page.url.startswith("https://") for page in selected)
+    finally:
+        frontier.close()
+
+
+def test_source_rotation_survives_restart_without_losing_priority(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "source-resume.sqlite"
+    first = Frontier(path)
+    try:
+        for i in range(6):
+            assert first.add(f"https://a-{i}.example.org/", depth=0,
+                             source="catalog", priority=60)
+            assert first.add(f"https://z-{i}.example.org/", depth=0,
+                             source="joined-candidate", priority=10)
+        page = first.claim(1, 1)[0]
+        assert page.source == "catalog"
+        first.complete(page)
+    finally:
+        first.close()
+    reopened = Frontier(path)
+    try:
+        # No inflight pages remain; both source-rotation and per-lane cursors
+        # should survive without resetting a previously completed page.
+        next_page = reopened.claim(1, 1)[0]
+        assert next_page.source == "joined-candidate"
+        assert next_page.url != page.url
+    finally:
+        reopened.close()

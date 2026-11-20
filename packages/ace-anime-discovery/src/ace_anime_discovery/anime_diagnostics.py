@@ -41,7 +41,23 @@ def candidate_decision(row: dict[str, object], *, already_approved: bool = False
     pages = onsite_pages if type(onsite_pages) is int else 0
     titles = onsite_titles if type(onsite_titles) is int else 0
 
+    # Paths are OR alternatives. Only the nearest path's gaps are considered
+    # immediate missing evidence; retain ALL paths' gaps for diagnostics.
+    path_gaps: dict[str, list[str]] = {}
+    raw_paths = row.get("eligibility_paths")
+    if isinstance(raw_paths, list):
+        for item in cast(list[object], raw_paths):
+            if not isinstance(item, dict):
+                continue
+            path_data = cast(dict[str, object], item)
+            name = path_data.get("path_code")
+            gaps = path_data.get("path_gaps")
+            if isinstance(name, str) and isinstance(gaps, list):
+                path_gaps[name] = [
+                    code for code in cast(list[object], gaps) if isinstance(code, str)
+                ]
     missing: list[str] = []
+    best_path: str | None = None
     if status == "excluded":
         reason = "excluded_by_maintainer_policy"
     elif already_in_pro or status == "pro":
@@ -52,26 +68,32 @@ def candidate_decision(row: dict[str, object], *, already_approved: bool = False
         reason = "ready_for_review"
     else:
         reason = "insufficient_verification"
-        if catalog_families < 2:
-            missing.append("second_independent_catalog")
-        if catalog_families == 1 and not joined:
-            missing.append("joined_list_match")
-        if not topical_homepage:
-            missing.append("topical_homepage")
-        if catalog_families == 0:
-            if pages < 2:
-                missing.append("two_verified_content_pages")
-            if titles < 2:
-                missing.append("two_distinct_content_titles")
-            if "site-internal-page:structured-content-page" not in markers and not any(
-                v.startswith("site-internal-page:") for v in markers
-            ):
-                missing.append("fetched_content_page_evidence")
-        # These represent alternative paths to eligibility, not AND conditions.
-        # Store all gaps so the next change can target the cheapest path.
+        if path_gaps:
+            best_path = min(path_gaps, key=lambda name: (
+                len(path_gaps[name]), list(path_gaps).index(name)
+            ))
+            missing = list(path_gaps[best_path])
+        else:
+            # Compatibility for older ledgers without explicit path evaluation.
+            if catalog_families < 2:
+                missing.append("second_independent_catalog")
+            if catalog_families == 1 and not joined:
+                missing.append("joined_list_match")
+            if not topical_homepage:
+                missing.append("topical_homepage")
+            if catalog_families == 0:
+                if pages < 2:
+                    missing.append("two_verified_content_pages")
+                if titles < 2:
+                    missing.append("two_distinct_content_titles")
+                if not any(v.startswith("site-internal-page:") for v in markers):
+                    missing.append("fetched_content_page_evidence")
     return {
         "code": reason,
         "missing_evidence": missing,
+        "alternative_path_gaps": path_gaps,
+        "closest_path": best_path,
+        "eligibility_path": row.get("eligibility_path"),
         "homepage_topic_observed": topical_homepage,
         "verified_content_pages": pages,
         "distinct_content_titles": titles,
