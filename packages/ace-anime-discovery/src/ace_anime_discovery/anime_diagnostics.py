@@ -17,7 +17,7 @@ def source_group(source: str) -> str:
         # Language codes only, never raw search queries.
         return "brave-search:" + detail if detail.isalpha() and len(detail) <= 8 else "brave-search"
     if family in {"catalog", "joined-candidate", "public-index", "outbound",
-                  "internal", "sitemap"}:
+                  "internal", "sitemap", "verification-homepage", "redirect"}:
         return family
     return "other"
 
@@ -41,8 +41,8 @@ def candidate_decision(row: dict[str, object], *, already_approved: bool = False
     pages = onsite_pages if type(onsite_pages) is int else 0
     titles = onsite_titles if type(onsite_titles) is int else 0
 
-    # Paths are OR alternatives. Only the nearest path's gaps are considered
-    # immediate missing evidence; retain ALL paths' gaps for diagnostics.
+    # Paths are OR alternatives. Prioritize actionable paths with existing
+    # supporting evidence; retain every path's gaps for diagnostics.
     path_gaps: dict[str, list[str]] = {}
     raw_paths = row.get("eligibility_paths")
     if isinstance(raw_paths, list):
@@ -69,10 +69,21 @@ def candidate_decision(row: dict[str, object], *, already_approved: bool = False
     else:
         reason = "insufficient_verification"
         if path_gaps:
-            best_path = min(path_gaps, key=lambda name: (
-                len(path_gaps[name]), list(path_gaps).index(name)
-            ))
-            missing = list(path_gaps[best_path])
+            # A generic independent-catalog path is one check from completion
+            # for virtually every weak lead; ranking only by gap count
+            # misleadingly attributes all failures to missing catalogs.
+            if catalog_families:
+                preferred = ("catalog-joined-homepage" if topical_homepage and joined
+                             else "catalog-verified-pages")
+            elif topical_homepage or pages:
+                preferred = "web-original"
+            else:
+                preferred = ""
+            if preferred in path_gaps:
+                best_path = preferred
+                missing = list(path_gaps[preferred])
+            else:
+                missing = ["no_independent_or_onsite_evidence"]
         else:
             # Compatibility for older ledgers without explicit path evaluation.
             if catalog_families < 2:
