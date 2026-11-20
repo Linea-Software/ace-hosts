@@ -27,7 +27,7 @@ def test_relevance_ranked_links_over_navigation() -> None:
 def test_robots_denial_and_redirect_refusal(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.INFO, logger="ace-hosts.anime-crawler")
+    caplog.set_level(logging.DEBUG, logger="ace-hosts.anime-crawler")
     requests: list[str] = []
 
     def forbid(url: str, _budget: crawler.RequestBudget, **_kw: object) -> crawler.PageResponse:

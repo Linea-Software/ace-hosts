@@ -95,7 +95,10 @@ entries are only weak discovery leads, never independent catalog votes.
    These files are **intermediate outputs**.
    The pipeline can also propose website-verified candidates absent from all catalogs and joined.
    The SQLite frontier preserves crawl state.
-   `crawl-report.json` and `crawl-report.md` record visited URLs, discoveries, sources, category and language distributions, errors, and remaining budgets.
+   `crawl-report.sqlite` stores a per-run event stream, HTTP diagnostics,
+   per-host decisions and missing evidence, source yields, and metrics with
+   explicitly labeled current-run versus persistent-state scope. Raw HTTP
+   bodies, authentication credentials and URL query strings are never stored.
    Do not publish these intermediate files directly.
 
 6. **Propose approved evidence for review.** ace_anime_discovery.propose_anime_sites creates **one review PR** for `seeds/anime-manga.txt`.
@@ -103,7 +106,8 @@ entries are only weak discovery leads, never independent catalog votes.
    It also qualifies through one catalog family, joined, and an inspected homepage.
    **Independent web-original leads qualify even with zero catalogs and no joined-list membership**, if the crawler successfully checks a thematic homepage and two distinct internal content pages with different titles. URL query variants of the same page or duplicate generic titles do not count.
    Homepage metadata alone, sitemap-only, and outbound-link-only leads do not qualify. Every eligible candidate is included, regardless of whether it was discovered from the web or catalogs.
-   The English PR table shows content categories, languages, discovery sources, verification methods, evidence, status, and score.
+   The PR body stays concise. Full verification signals and per-host decision
+   reasons are queryable in the standalone SQLite artifact.
    A person must review the changes.
    The maintainer can remove false positives before merging.
    The hosted workflow and CLI propose **all qualified new candidates** without a numeric cap. The PR description contains only category counts and review instructions; the complete host list is the `seeds/anime-manga.txt` diff, with per-domain evidence in workflow artifacts.
@@ -121,10 +125,59 @@ The twice-weekly workflow is `.github/workflows/anime-discovery.yml`.
 It runs each Wednesday and Saturday at 04:30 UTC.
 You can also start it manually in GitHub Actions.
 
-The workflow restores an incremental SQLite cache.
-It uploads crawl and review artifacts and tests proposed data.
+The workflow restores the incremental crawler SQLite cache (private to the
+runner's cache). It uploads **one per-run artifact**:
+`anime-manga-discovery-report` containing `crawl-report.sqlite`.
+The report is distinct from `crawl-state.sqlite` and does not contain
+the persistent crawler queue. Intermediate `candidates.jsonl` and
+`summary.json` remain local for the proposal and verification steps.
+The logs show progress every 100 inspected pages or 60 seconds, plus summaries,
+rather than verbose per-page diagnostics. The report is created before crawling
+and saved even if later review steps fail.
 It creates or updates an `automation/anime-discovery` PR **only when new proposals exist**.
 When the workflow detects human review or manual commits, it preserves the existing review branch.
+
+## Querying the per-run SQLite report
+
+Download the **anime-manga-discovery-report** artifact for the GitHub Actions
+run. It contains a single `crawl-report.sqlite` database. SQLite is the
+source of truth for diagnostics; the Actions console is only for live progress.
+
+The schema has these indexed tables:
+
+- `metadata(key, value_json)`: schema version, run ID, run state
+  (`preflight`, `running`, `crawl_complete`, `complete`, or
+  `manual_review_required`), funnel, HTTP histograms, cumulative queue
+  snapshot, classification summary and error counters.
+- `http_requests`: hostname, request stage (page/robots/sitemap/search),
+  status or exception class, duration in milliseconds and retry attempt.
+- `page_events`: inspected hostname, source family, page type, result.
+- `candidates`: candidate host, review eligibility, decision reason and
+  structured categorical evidence (JSON).
+- `missing_evidence`: which checks prevented a candidate from qualifying.
+- `source_attribution` and `source_yield`: inspected sources and their
+  contribution to the current candidate snapshot.
+
+Sample read-only queries (requires the `sqlite3` CLI):
+
+~~~sh
+sqlite3 -readonly crawl-report.sqlite 'SELECT decision_code, COUNT(*) FROM candidates GROUP BY decision_code ORDER BY COUNT(*) DESC;'
+sqlite3 -readonly crawl-report.sqlite 'SELECT missing_code, COUNT(*) FROM missing_evidence GROUP BY missing_code ORDER BY COUNT(*) DESC LIMIT 20;'
+sqlite3 -readonly crawl-report.sqlite 'SELECT source, attempted_hosts, review_eligible_hosts FROM source_yield ORDER BY review_eligible_hosts DESC;'
+sqlite3 -readonly crawl-report.sqlite 'SELECT phase, status_code, error_code, COUNT(*) FROM http_requests GROUP BY phase, status_code, error_code ORDER BY COUNT(*) DESC;'
+~~~
+
+Individual event records are written while crawling, so a mid-run failure can
+still yield a partially populated artifact. Classifier decisions and summary
+data are added after analysis. A per-run report never acts as or replaces the
+persistent frontier/cache. Repeated local runs replace the local report file;
+GitHub keeps one separately named artifact per workflow run.
+
+The report stores hostnames and normalized classification signals but **never
+full visited URLs, query parameters, page bodies, cookies, authentication
+headers or tokens**. It can therefore be inspected without collecting raw
+website content. Source attribution can overlap: a host found through two
+sources appears in both groups.
 
 The workflow needs permission to create PRs.
 Give it `contents: write` and `pull-requests: write` permissions.

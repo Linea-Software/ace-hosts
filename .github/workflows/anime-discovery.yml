@@ -37,6 +37,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --locked
+      # Create a minimal report even if downloading catalogs fails before crawling.
+      # The crawler replaces it when its own run begins.
+      - name: Initialize run report
+        run: |
+          uv run python -c 'from pathlib import Path; from uuid import uuid4; from ace_anime_discovery.anime_run_report import RunReport; r = RunReport(Path("downloads/anime-discovery/crawl-report.sqlite"), uuid4().hex); r.put_metadata("status", "preflight"); r.close()'
       # Chromium stays opt-in: the browser renderer cannot pin resolved IPs.
       # Static HTTPS crawling retains DNS pinning, robots and per-host pacing.
       - name: Restore incremental crawler state
@@ -84,19 +89,12 @@ jobs:
           uv run python scripts/merge_hosts.py --category anime-manga --no-progress
           uv run pytest -q
           uv run basedpyright
-      - name: Publish complete review artifacts
+      - name: Publish self-contained discovery report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: anime-manga-discovery-review
-          path: |
-            downloads/anime-discovery/candidates.jsonl
-            downloads/anime-discovery/summary.json
-            downloads/anime-discovery/eligible-anime.txt
-            downloads/anime-discovery/pr-body.md
-            downloads/anime-discovery/crawl-report.json
-            downloads/anime-discovery/crawl-report.md
-            downloads/anime-discovery/crawl-state.sqlite*
+          name: anime-manga-discovery-report
+          path: downloads/anime-discovery/crawl-report.sqlite
           if-no-files-found: warn
           retention-days: 30
       - name: Protect a previously reviewed proposal branch

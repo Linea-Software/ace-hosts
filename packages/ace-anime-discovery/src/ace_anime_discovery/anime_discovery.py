@@ -32,6 +32,8 @@ if __package__ in (None, ""):
 
 from ace_anime_discovery import utils
 from ace_anime_discovery.anime_browser import BrowserRenderer
+from ace_anime_discovery.anime_diagnostics import summarize_candidates
+from ace_anime_discovery.anime_run_report import finalize_run_report
 
 logger = logging.getLogger("ace-hosts.anime-discovery")
 MAX_RESPONSE_BYTES = 10_000_000
@@ -652,17 +654,17 @@ def scrape_catalog_sites(session: requests.Session, records: list[Evidence], joi
     total = min(len(sites), max_sites)
     try:
         for index, host in enumerate(sites[:max_sites], start=1):
-            logger.info("site scraping: visiting %s (%d/%d)", host, index, total)
+            logger.debug("site scraping: visiting %s (%d/%d)", host, index, total)
             try:
                 evidence = scrape_site(
                     session, host, joined, timeout=timeout, browser=browser,
                     scrape_sitemap=scrape_sitemaps,
                 )
                 scraped.extend(evidence)
-                logger.info("site scraping: finished %s (%d evidence item(s))",
+                logger.debug("site scraping: finished %s (%d evidence item(s))",
                             host, len(evidence))
             except (OSError, ValueError, requests.RequestException) as error:
-                logger.info("site %s skipped: %s", host, error)
+                logger.debug("site %s skipped: %s", host, error)
     finally:
         if browser is not None:
             browser.close()
@@ -812,6 +814,20 @@ def build_discovery(records: list[Evidence], *, joined_file: Path, pro_file: Pat
     allowed = _load_hostnames(approved_file)
     excluded = _load_hostnames(whitelist_file) | _load_hostnames(exceptions_file)
     ledger, eligible = classify(records, joined, pro, allowed, excluded)
+    raw_sources = crawl_stats.get("run_host_sources") if crawl_stats is not None else None
+    run_sources = cast(dict[str, list[str]], raw_sources) if isinstance(raw_sources, dict) else None
+    diagnostics, decisions = summarize_candidates(
+        ledger, run_host_sources=run_sources,
+        already_in_pro=pro, already_approved=allowed,
+    )
+    diagnostics_by_host = {cast(str, row["hostname"]): row for row in decisions}
+    for row in ledger:
+        match = diagnostics_by_host.get(cast(str, row["hostname"]))
+        if match is not None:
+            row["diagnostics"] = {
+                key: value for key, value in match.items()
+                if key not in {"hostname", "status", "review_eligible"}
+            }
     counts = {state: sum(entry["status"] == state for entry in ledger)
               for state in ("pro", "validated-candidate", "website-verified", "review", "excluded")}
     counts["website_observed_only"] = sum(
@@ -820,8 +836,8 @@ def build_discovery(records: list[Evidence], *, joined_file: Path, pro_file: Pat
     )
     # A broken or hostile upstream cannot silently trigger an enormous jump.
     additional = eligible - pro
-    if len(additional) > max(3000, len(pro) // 2):
-        raise ValueError("anomalous discovery growth: manual review required")
+    growth_guard_triggered = len(additional) > max(3000, len(pro) // 2)
+    # Preserve diagnostics of an anomalous run before failing closed.
     output_dir.mkdir(parents=True, exist_ok=True)
     utils.atomic_write_lines(output_dir / "candidates.jsonl",
                              (json.dumps({"detected_at": checked_at, **row},
@@ -838,6 +854,25 @@ def build_discovery(records: list[Evidence], *, joined_file: Path, pro_file: Pat
                              [json.dumps(summary, sort_keys=True)])
     if crawl_stats is not None:
         report = dict(crawl_stats)
+        report.pop("run_host_sources", None)  # Persisted as indexed SQLite rows.
+        report.pop("run_report_path", None)  # Avoid local filesystem details.
+        report["schema_version"] = 2
+        report["counter_scopes"] = {
+            "current_run": "Only inspected or queued during this invocation",
+            "lifetime_state": "Cumulative counts from the persistent SQLite frontier",
+            "candidate_snapshot": "All existing evidence and catalog results at report generation",
+        }
+        report["lifetime_state"] = {
+            key: report[key] for key in (
+                "urls_discovered", "urls_crawled", "urls_failed",
+                "urls_pending", "unique_domains", "evidence_domains"
+            ) if key in report
+        }
+        report["diagnostics"] = diagnostics
+        report["validation"] = {
+            "status": "manual_review_required" if growth_guard_triggered else "passed",
+            "reason": "anomalous_discovery_growth" if growth_guard_triggered else None,
+        }
         report.update({
             "new_domains_not_in_pro": sum(row["hostname"] not in pro and
                                           row["hostname"] not in allowed for row in ledger),
@@ -848,19 +883,20 @@ def build_discovery(records: list[Evidence], *, joined_file: Path, pro_file: Pat
                 (category, sum(category in cast(list[str], row["categories"]) for row in ledger))
                 for category in CONTENT_TYPES)),
         })
-        utils.atomic_write_lines(output_dir / "crawl-report.json",
-                                 [json.dumps(report, ensure_ascii=False, sort_keys=True)])
-        lines = ["# Anime discovery crawl report", "",
-                 f"URLs discovered: {report.get('urls_discovered', 0)}",
-                 f"URLs crawled: {report.get('urls_crawled', 0)}",
-                 f"Requests: {report.get('requests', 0)} / {report.get('request_budget', 0)}",
-                 f"New review candidates: {summary['review_candidates']}",
-                 f"Verified websites: {report.get('websites_verified', 0)}",
-                 f"Excluded: {counts['excluded']}", "",
-                 "A low proposal count can indicate robots/access restrictions, exhausted",
-                 "request budgets, insufficient thematic metadata, already-approved sites,",
-                 "or excluded infrastructure. See crawl-report.json and candidates.jsonl."]
-        utils.atomic_write_lines(output_dir / "crawl-report.md", lines)
+        run_report = crawl_stats.get("run_report_path")
+        current_run = crawl_stats.get("current_run")
+        current_id = (cast(dict[str, object], current_run).get("run_id")
+                      if isinstance(current_run, dict) else None)
+        if isinstance(run_report, str):
+            finalize_run_report(
+                Path(run_report),
+                run_id=current_id if isinstance(current_id, str) else None,
+                summary=summary, report=report, rows=ledger,
+                decisions=decisions, run_sources=run_sources,
+                status="manual_review_required" if growth_guard_triggered else "complete",
+            )
+    if growth_guard_triggered:
+        raise ValueError("anomalous discovery growth: manual review required")
     return summary
 
 
@@ -1084,6 +1120,7 @@ def main(argv: list[str] | None = None) -> int:
                     max_seed_hosts=args.crawl_seed_hosts,
                     max_joined_hosts=args.crawl_joined_hosts,
                     max_search_queries=args.crawl_search_queries,
+                    report_path=args.output_dir / "crawl-report.sqlite",
                 ),
                 directories=tuple(args.crawl_directory_url or []),
                 public_indexes=args.crawl_public_indexes,

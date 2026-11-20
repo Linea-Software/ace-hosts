@@ -51,7 +51,7 @@ def test_scraping_public_site_metadata_and_links(monkeypatch: pytest.MonkeyPatch
 
 def test_catalog_scraping_logs_each_site(monkeypatch: pytest.MonkeyPatch,
                                          caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.INFO, logger="ace-hosts.anime-discovery")
+    caplog.set_level(logging.DEBUG, logger="ace-hosts.anime-discovery")
     lead = discovery.Evidence("reader.example.org", "Reader", "manga", (),
                               "aidoku", None, "aidoku", "baseURL")
 

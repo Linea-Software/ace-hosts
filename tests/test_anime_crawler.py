@@ -86,7 +86,7 @@ def test_persistent_priority_frontier_resume(tmp_path: Path) -> None:
 def test_recursive_directory_finds_unknown_site_and_requires_human_review(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.INFO, logger="ace-hosts.anime-crawler")
+    caplog.set_level(logging.DEBUG, logger="ace-hosts.anime-crawler")
     visited: list[str] = []
 
     def fake_fetch(url: str, _budget: crawler.RequestBudget, **_kwargs: object) -> crawler.PageResponse:
@@ -121,7 +121,7 @@ def test_recursive_directory_finds_unknown_site_and_requires_human_review(
     assert "https://unknown-reader.example.org/" in visited
     assert "crawl visiting: host=unknown-reader.example.org path=/" in caplog.text
     assert "crawl matched: host=unknown-reader.example.org categories=" in caplog.text
-    assert "crawl finished: requests=" in caplog.text
+    assert "crawl finished: pages=" in caplog.text
     assert not any(e.hostname == "github.com" for e in evidence)
     assert {e.repository for e in evidence if e.hostname == "unknown-reader.example.org"} == {
         "web-link", "site-homepage",

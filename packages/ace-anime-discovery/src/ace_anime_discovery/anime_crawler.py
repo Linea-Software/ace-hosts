@@ -20,6 +20,7 @@ import sqlite3
 import ssl
 import threading
 import time
+import uuid
 import xml.etree.ElementTree as ET
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable
@@ -33,6 +34,8 @@ from urllib.robotparser import RobotFileParser
 
 from ace_anime_discovery.anime_browser import BrowserRenderer
 from ace_anime_discovery.anime_crawl_policy import public_crawl_url
+from ace_anime_discovery.anime_diagnostics import source_group
+from ace_anime_discovery.anime_run_report import RunReport
 from ace_anime_discovery.anime_discovery import (
     Evidence,
     SitePage,
@@ -271,6 +274,7 @@ class CrawlConfig:
     max_search_queries: int = 24
     max_seed_hosts: int = 1200
     max_joined_hosts: int = 1500
+    report_path: Path | None = None
 
     def validate(self) -> None:
         if (not 1 <= self.max_requests <= 10_000 or
@@ -302,6 +306,9 @@ class Frontier:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.conn: sqlite3.Connection = sqlite3.connect(path)
         self.duplicate_urls: int = 0
+        self.queued_this_run: Counter[str] = Counter()
+        self.enqueue_rejections: Counter[str] = Counter()
+        self.queued_hosts: set[str] = set()
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS frontier (
@@ -410,10 +417,15 @@ class Frontier:
     def add(self, url: str, *, depth: int, source: str,
             kind: str = "lead", priority: int = 20) -> bool:
         normalized = normalize_url(url)
-        if normalized is None or depth > 6 or not public_crawl_url(normalized):
+        if normalized is None or depth > 6:
+            self.enqueue_rejections["invalid_url_or_depth"] += 1
+            return False
+        if not public_crawl_url(normalized):
+            self.enqueue_rejections["sensitive_url"] += 1
             return False
         host = urlsplit(normalized).hostname
         if not host or (kind != "directory" and is_shared(host)):
+            self.enqueue_rejections["shared_or_invalid_host"] += 1
             return False
         with self.conn:
             cursor = self.conn.execute(
@@ -427,6 +439,10 @@ class Frontier:
             )
         if cursor.rowcount == 0:
             self.duplicate_urls += 1
+            self.enqueue_rejections["duplicate_url"] += 1
+        else:
+            self.queued_this_run[source_group(source)] += 1
+            self.queued_hosts.add(host)
         return cursor.rowcount > 0
 
     def evidence(self, entry: Evidence) -> None:
@@ -651,8 +667,26 @@ class WebCrawler:
         self.errors: Counter[str] = Counter()
         self.browser_rendered: int = 0
         self.started: float = time.monotonic()
+        self.run_id: str = uuid.uuid4().hex
+        self._run_host_sources: dict[str, set[str]] = {}
+        self._run_attempted_hosts: set[str] = set()
+        self._run_homepage_fetched: set[str] = set()
+        self._run_homepage_matched: set[str] = set()
+        self._run_content_verified: set[str] = set()
+        self._run_outcomes: Counter[str] = Counter()
+        self._http_lock: threading.Lock = threading.Lock()
+        report_path = config.report_path or config.state_path.parent / "crawl-report.sqlite"
+        if report_path.resolve() == config.state_path.resolve():
+            raise ValueError("run report and crawler state paths must differ")
+        self.report: RunReport = RunReport(report_path, self.run_id)
+        self._progress_last: float = self.started
+        self._processed_pages: int = 0
+        self._http_status: Counter[str] = Counter()
+        self._http_errors: Counter[str] = Counter()
+        self._http_latency: Counter[str] = Counter()
 
     def close(self) -> None:
+        self.report.close()
         self.frontier.close()
 
     def seed(self, records: list[Evidence], *, directories: tuple[str, ...] = (),
@@ -736,15 +770,38 @@ class WebCrawler:
                     host, self.config.delay)
             if pause:
                 time.sleep(pause)
+            stage = ("robots" if urlsplit(url).path == "/robots.txt" else
+                     "sitemap" if urlsplit(url).path == "/sitemap.xml" else
+                     "search" if host == "api.search.brave.com" else "page")
+            started = time.monotonic()
             try:
                 response = self.fetch(url, self.budget, timeout=self.config.timeout,
                                       max_bytes=max_bytes, headers=headers)
-            except (TimeoutError, ConnectionError):
-                if attempt == 0 and self.budget.remaining():
-                    self.retries += 1
-                    time.sleep(0.5)
-                    continue
+            except Exception as error:
+                duration = time.monotonic() - started
+                with self._http_lock:
+                    self._http_errors[stage + ":" + type(error).__name__] += 1
+                    self._http_latency["under_1s" if duration < 1 else
+                                       "under_5s" if duration < 5 else "over_5s"] += 1
+                self.report.record_http(
+                    host, stage, error_code=type(error).__name__,
+                    latency_ms=max(0, int(duration * 1000)), attempt=attempt + 1,
+                )
+                if isinstance(error, (TimeoutError, ConnectionError)):
+                    if attempt == 0 and self.budget.remaining():
+                        self.retries += 1
+                        time.sleep(0.5)
+                        continue
                 raise
+            duration = time.monotonic() - started
+            with self._http_lock:
+                self._http_status[stage + ":" + str(response.status)] += 1
+                self._http_latency["under_1s" if duration < 1 else
+                                   "under_5s" if duration < 5 else "over_5s"] += 1
+            self.report.record_http(
+                host, stage, status_code=response.status,
+                latency_ms=max(0, int(duration * 1000)), attempt=attempt + 1,
+            )
             if response.status in {500, 502, 503, 504} and attempt == 0 and self.budget.remaining():
                 self.retries += 1
                 time.sleep(0.5)
@@ -827,7 +884,7 @@ class WebCrawler:
                     )
                     if response.status in (404, 410) or soft_missing:
                         self._robots_missing.add(host)
-                        logger.info(
+                        logger.debug(
                             "robots absent: host=%s status=%d; public HTML paths only",
                             host, response.status,
                         )
@@ -855,7 +912,7 @@ class WebCrawler:
                             self._host_delay[host] = paced_delay
                     else:
                         self._robots_failures[host] = f"robots-http-{response.status}"
-                        logger.info("robots denied: host=%s status=%d", host, response.status)
+                        logger.debug("robots denied: host=%s status=%d", host, response.status)
                         return False
                     self._robots[host] = parser
                 except (OSError, ValueError, RuntimeError, http.client.HTTPException,
@@ -864,7 +921,7 @@ class WebCrawler:
                               else "robots-dns-error" if isinstance(error, socket.gaierror)
                               else "robots-unavailable")
                     self._robots_failures[host] = reason
-                    logger.info("robots fetch failed: host=%s cause=%s detail=%s",
+                    logger.debug("robots fetch failed: host=%s cause=%s detail=%s",
                                 host, reason, type(error).__name__)
                     return False
             robots = self._robots[host]
@@ -873,7 +930,7 @@ class WebCrawler:
     def _inspect(self, page: CrawlPage) -> InspectedPage:
         parts = urlsplit(page.url)
         host = parts.hostname or ""
-        logger.info("crawl visiting: host=%s path=%s source=%s depth=%d",
+        logger.debug("crawl visiting: host=%s path=%s source=%s depth=%d",
                     host, parts.path or "/", page.source, page.depth)
         if not self._allowed(page.url):
             reason = ("sensitive-url" if not public_crawl_url(page.url)
@@ -943,8 +1000,27 @@ class WebCrawler:
     def _record(self, data: InspectedPage, browser: BrowserRenderer | None) -> None:
         page = data.page
         host = urlsplit(page.url).hostname or ""
+        self._run_attempted_hosts.add(host)
+        self._run_host_sources.setdefault(host, set()).add(source_group(page.source))
+        page_type = ("directory" if page.kind == "directory" else
+                     "homepage" if page.url == f"https://{host}/" else "content")
+        self._processed_pages += 1
+        now = time.monotonic()
+        if self._processed_pages % 100 == 0 or now - self._progress_last >= 60:
+            self._progress_last = now
+            logger.info(
+                "crawl progress: pages=%d hosts=%d topical=%d requests=%d/%d errors=%d",
+                self._processed_pages, len(self._run_attempted_hosts),
+                len(self._run_homepage_matched),
+                self.budget.requests, self.config.max_requests,
+                sum(self.errors.values()),
+            )
         if data.error:
-            logger.info("crawl skipped: host=%s path=%s reason=%s",
+            self._run_outcomes[data.error] += 1
+            self.report.record_page(
+                host, source_group(page.source), page_type, data.error,
+            )
+            logger.debug("crawl skipped: host=%s path=%s reason=%s",
                         host, urlsplit(page.url).path or "/", data.error)
             if data.error != "budget-exhausted":
                 if page.url == "https://" + host + "/":
@@ -975,12 +1051,25 @@ class WebCrawler:
                 method = "html-rendered"
                 self.browser_rendered += 1
         is_homepage = page.url == "https://" + host + "/"
+        if is_homepage:
+            self._run_homepage_fetched.add(host)
+            if categories:
+                self._run_homepage_matched.add(host)
         structured_content = (not is_homepage and content_page_path(urlsplit(page.url).path)
                               and len(title.strip()) >= 8
                               and not EMPTY_PAGE_TITLE.search(title.strip()))
+        outcome = ("homepage_topical" if is_homepage and categories else
+                   "homepage_unverified" if is_homepage else
+                   "content_verified" if structured_content else "content_checked")
+        self._run_outcomes[outcome] += 1
+        self.report.record_page(
+            host, source_group(page.source), page_type, outcome,
+        )
         if page.kind != "directory" and safe_hostname(host) and (categories or structured_content):
+            if structured_content:
+                self._run_content_verified.add(host)
             if categories:
-                logger.info("crawl matched: host=%s categories=%s method=%s",
+                logger.debug("crawl matched: host=%s categories=%s method=%s",
                             host, ",".join(categories), method)
             # Internal topical pages are supporting evidence, not homepage votes.
             repository = "site-homepage" if is_homepage else "site-internal-page"
@@ -1037,7 +1126,41 @@ class WebCrawler:
                 browser.close()
         stats = self.frontier.statistics()
         records = self.frontier.records()
+        run_funnel = {
+            "queued_hosts": len(self.frontier.queued_hosts),
+            "attempted_hosts": len(self._run_attempted_hosts),
+            "html_homepage_hosts": len(self._run_homepage_fetched),
+            "topical_homepage_hosts": len(self._run_homepage_matched),
+            "content_page_hosts_verified": len(self._run_content_verified),
+        }
+        current_run: dict[str, object] = {
+            "run_id": self.run_id,
+            "funnel": run_funnel,
+            "requests": self.budget.requests,
+            "request_budget": self.config.max_requests,
+            "duration_seconds": round(time.monotonic() - self.started, 2),
+            "http_statuses": dict(sorted(self._http_status.items())),
+            "http_errors": dict(sorted(self._http_errors.items())),
+            "http_latency_buckets": dict(sorted(self._http_latency.items())),
+            "page_outcomes": dict(sorted(self._run_outcomes.items())),
+            "queued_urls_by_source": dict(sorted(self.frontier.queued_this_run.items())),
+            "enqueue_rejections": dict(sorted(self.frontier.enqueue_rejections.items())),
+            "robots_missing_hosts": len(self._robots_missing),
+            "robots_errors": dict(sorted(Counter(self._robots_failures.values()).items())),
+        }
+        self.report.put_metadata("current_run", current_run)
+        self.report.put_metadata("lifetime_state", {
+            key: stats[key] for key in (
+                "urls_discovered", "urls_crawled", "urls_failed",
+                "urls_pending", "unique_domains", "evidence_domains",
+            ) if key in stats
+        })
+        self.report.put_metadata("status", "crawl_complete")
         stats.update({
+            "current_run": current_run,
+            "run_report_path": str(self.report.path),
+            "run_host_sources": {host: sorted(groups) for host, groups in
+                                 sorted(self._run_host_sources.items())},
             "requests": self.budget.requests,
             "request_budget": self.config.max_requests,
             "duration_seconds": round(time.monotonic() - self.started, 2),
@@ -1048,10 +1171,14 @@ class WebCrawler:
             "websites_verified": len({e.hostname for e in records if e.repository == "site-homepage"}),
             "language_distribution": dict(Counter(lang for e in records for lang in e.languages)),
         })
-        logger.info("crawl finished: requests=%d visited=%s verified=%s failed=%s duration=%.1fs",
-                    self.budget.requests, stats.get("urls_crawled"),
-                    stats["websites_verified"], stats.get("urls_failed"),
-                    time.monotonic() - self.started)
+        logger.info(
+            "crawl finished: pages=%d hosts=%d topical=%d failures=%d "
+            + "requests=%d/%d duration=%.1fs",
+            self._processed_pages, len(self._run_attempted_hosts),
+            len(self._run_homepage_matched), sum(self.errors.values()),
+            self.budget.requests, self.config.max_requests,
+            time.monotonic() - self.started,
+        )
         return stats
 
 
