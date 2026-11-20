@@ -72,22 +72,36 @@ def propose_sites(
                         continue
                     try:
                         parsed = urlsplit(raw)
+                        # Explicit structurally verified pages may use
+                        # framework-specific or language-prefixed opaque paths.
+                        verified_route = "site-internal-page:verified-content-page" in scrapes
                         if (parsed.scheme == "https" and parsed.hostname == host
-                                and content_page_path(parsed.path)
+                                and parsed.path not in {"", "/"}
+                                and (content_page_path(parsed.path) or verified_route)
                                 and normalize_hostname(raw) == host):
                             content_urls.add(parsed.path)
                     except ValueError:
                         continue
-            web_original = (
-                families == 0 and scraped
-                and row.get("verification_method") == "multi-page-website"
-                and row.get("review_eligible") is True
+            # Revalidate direct evidence here: candidates.jsonl is untrusted
+            # input and an eligibility_path label is never authorization alone.
+            multi_page_verified = (
+                scraped and row.get("review_eligible") is True
                 and len(content_urls) >= 2
                 and type(row.get("onsite_distinct_titles")) is int
                 and cast(int, row["onsite_distinct_titles"]) >= 2
                 and any(key.startswith("site-internal-page:") for key in scrapes)
             )
-            if families >= 2 or (families >= 1 and joined and scraped) or web_original:
+            web_original = (
+                families == 0 and multi_page_verified
+                and row.get("verification_method") == "multi-page-website"
+            )
+            catalog_verified = (
+                families >= 1 and multi_page_verified
+                and row.get("verification_method") == "catalog-and-verified-pages"
+                and row.get("eligibility_path") == "catalog-verified-content"
+            )
+            if (families >= 2 or (families >= 1 and joined and scraped)
+                    or catalog_verified or web_original):
                 eligible.append(row)
 
     # Do not truncate: every qualified domain goes into the review PR.

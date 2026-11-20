@@ -232,3 +232,142 @@ def test_truncated_joined_input_fails_closed(tmp_path: Path):
             checked_at="2026-11-03"
         )
     assert not (tmp_path / "reports").exists()
+
+
+def _catalog_homepage_with_pages(host: str, *, pages: int = 8) -> list[discovery.Evidence]:
+    """Synthetic successful fetch evidence; no live requests or .temp input."""
+    records = [
+        discovery.Evidence(host, "Manga catalog", "manga", (), "aidoku", "source",
+                           "aidoku", "baseURL"),
+        discovery.Evidence(host, "Read manga online", "manga", (), "site-homepage",
+                           None, "web-lead", "html-title-description",
+                           origin=f"https://{host}/"),
+    ]
+    records.extend(
+        discovery.Evidence(
+            host, f"Distinct series number {index}", "manga", (),
+            "site-internal-page", None, "web-lead", "structured-content-page",
+            origin=f"https://{host}/series/series-{index}",
+        )
+        for index in range(pages)
+    )
+    return records
+
+
+@pytest.mark.parametrize("host", [
+    "lightnovel.to", "madarascans.net", "violetmanga.com",
+    "nightjarreads.com", "ranobemir.com",
+])
+def test_catalog_homepage_and_eight_pages_qualify_without_joined(host: str) -> None:
+    records = _catalog_homepage_with_pages(host)
+    ledger, approved = discovery.classify(records, set(), set(), set(), set())
+    row = ledger[0]
+    assert approved == set()  # Review proposal, never automatic publication.
+    assert row["release_approved"] is False
+    assert row["joined"] is False
+    assert row["independent_families"] == 1
+    assert row["review_eligible"] is True
+    assert row["eligibility_path"] == "catalog-verified-content"
+    assert row["verification_method"] == "catalog-and-verified-pages"
+    assert row["onsite_content_pages"] == 8
+    assert row["onsite_distinct_titles"] == 8
+    paths = cast(list[dict[str, object]], row["eligibility_paths"])
+    assert [path["path_code"] for path in paths] == [
+        "independent-catalogs", "catalog-joined-homepage",
+        "catalog-verified-content", "web-original",
+    ]
+    qualified = [path for path in paths if path["qualified"] is True]
+    assert [path["path_code"] for path in qualified] == ["catalog-verified-content"]
+    required = cast(list[dict[str, object]], qualified[0]["required_checks"])
+    assert all(check["required"] is True and check["passed"] is True for check in required)
+    assert qualified[0]["path_gaps"] == []
+    assert "joined_list_match" in cast(list[str], paths[1]["path_gaps"])
+    assert "two_independent_catalog_families" in cast(list[str], paths[0]["path_gaps"])
+    assert "no_catalog_family" in cast(list[str], paths[3]["path_gaps"])
+    # Changes in evidence enumeration cannot affect the diagnostic path/gaps.
+    reversed_ledger, _ = discovery.classify(list(reversed(records)), set(), set(), set(), set())
+    assert reversed_ledger[0]["eligibility_path"] == row["eligibility_path"]
+    assert reversed_ledger[0]["eligibility_paths"] == row["eligibility_paths"]
+
+
+def test_independent_and_joined_catalog_paths_remain_available() -> None:
+    host = "reader.example.org"
+    records = _catalog_homepage_with_pages(host, pages=0)
+    joined, published = discovery.classify(records, {host}, set(), set(), set())
+    assert joined[0]["eligibility_path"] == "catalog-joined-homepage"
+    assert joined[0]["review_eligible"] is True
+    assert published == set()
+
+    records.append(discovery.Evidence(host, "Other catalog", "manga", (),
+                                      "mangayomi", "source", "mangayomi", "baseUrl"))
+    confirmed, published = discovery.classify(records, set(), set(), set(), set())
+    assert confirmed[0]["eligibility_path"] == "independent-catalogs"
+    assert published == {host}
+
+
+def test_catalog_content_path_preserves_exclusions_approval_and_pro() -> None:
+    host = "reader.example.org"
+    records = _catalog_homepage_with_pages(host)
+    excluded, approved = discovery.classify(records, set(), set(), {host}, {host})
+    assert excluded[0]["eligibility_path"] == "none"
+    assert excluded[0]["review_eligible"] is False
+    assert excluded[0]["release_approved"] is False
+    assert "policy_allowed" in cast(
+        list[str],
+        cast(list[dict[str, object]], excluded[0]["eligibility_paths"])[2]["path_gaps"],
+    )
+    assert approved == set()
+    pro, approved = discovery.classify(records, set(), {host}, set(), set())
+    assert pro[0]["status"] == "pro"
+    assert pro[0]["release_approved"] is True
+    assert approved == {host}
+    seeded, approved = discovery.classify(records, set(), set(), {host}, set())
+    assert seeded[0]["release_approved"] is True
+    assert approved == {host}
+
+
+def test_one_url_cannot_provide_two_distinct_content_titles() -> None:
+    host = "manga.example.org"
+    records = [
+        discovery.Evidence(host, "Manga Hub", "manga", (), "aidoku", None,
+                           "aidoku", "baseURL"),
+        discovery.Evidence(host, "Manga Hub", "manga", (), "site-homepage", None,
+                           "web-lead", "html-title-description",
+                           origin=f"https://{host}/"),
+        discovery.Evidence(host, "Manga First", "manga", (), "site-internal-page",
+                           None, "web-lead", "verified-content-page",
+                           origin=f"https://{host}/opaque/one"),
+        discovery.Evidence(host, "Manga Second", "manga", (), "site-internal-page",
+                           None, "web-lead", "verified-content-page",
+                           origin=f"https://{host}/opaque/one"),
+        discovery.Evidence(host, None, "manga", (), "site-internal-page", None,
+                           "web-lead", "verified-content-page",
+                           origin=f"https://{host}/opaque/two"),
+    ]
+    ledger, approved = discovery.classify(records, set(), set(), set(), set())
+    assert approved == set()
+    row = ledger[0]
+    assert row["onsite_content_pages"] == 2
+    assert row["onsite_distinct_titles"] == 1
+    assert row["review_eligible"] is False
+
+
+def test_two_structurally_verified_opaque_paths_qualify_with_catalog() -> None:
+    host = "manga.example.org"
+    records = [
+        discovery.Evidence(host, "Manga Hub", "manga", (), "aidoku", None,
+                           "aidoku", "baseURL"),
+        discovery.Evidence(host, "Manga Hub", "manga", (), "site-homepage", None,
+                           "web-lead", "html-title-description",
+                           origin=f"https://{host}/"),
+        discovery.Evidence(host, "Manga First", "manga", (), "site-internal-page",
+                           None, "web-lead", "verified-content-page",
+                           origin=f"https://{host}/opaque/one"),
+        discovery.Evidence(host, "Manga Second", "manga", (), "site-internal-page",
+                           None, "web-lead", "verified-content-page",
+                           origin=f"https://{host}/opaque/two"),
+    ]
+    ledger, approved = discovery.classify(records, set(), set(), set(), set())
+    assert approved == set()
+    assert ledger[0]["review_eligible"] is True
+    assert ledger[0]["eligibility_path"] == "catalog-verified-content"

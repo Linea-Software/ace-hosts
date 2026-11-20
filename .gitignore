@@ -31,4 +31,5 @@ downloads/
 hosts/*
 !hosts/.gitkeep
 .tmp-out/
+.temp/
 *.tmp

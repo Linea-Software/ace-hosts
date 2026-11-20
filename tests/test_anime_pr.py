@@ -230,3 +230,53 @@ def test_unmerged_discovery_report_cannot_enter_release(tmp_path: Path, monkeypa
     seed.write_text("pro.org\napproved.org\n", encoding="utf-8")
     assert merge_hosts.main(["--category", "anime-manga", "--no-progress"]) == 0
     assert set(utils.iter_domains(hosts)) == {"source.org", "pro.org", "approved.org"}
+
+
+def test_pr_accepts_catalog_plus_verified_content_without_joined(tmp_path: Path) -> None:
+    host = "readnovel.example.org"
+    def entry(*, family: int = 1, method: str = "catalog-and-verified-pages",
+              titles: int = 2, reviewed: bool = True,
+              path: str = "catalog-verified-content") -> dict[str, object]:
+        return {
+            "hostname": host, "status": "review", "independent_families": family,
+            "joined": False, "review_eligible": reviewed,
+            "verification_method": method, "eligibility_path": path,
+            "onsite_distinct_titles": titles,
+            "onsite_content_urls": [
+                f"https://{host}/manga/alpha/chapter-1",
+                f"https://{host}/manga/beta/chapter-2",
+            ],
+            "evidence": [
+                "aidoku:baseURL", "site-homepage:html-title-description",
+                "site-internal-page:structured-content-page",
+            ],
+        }
+
+    ledger = tmp_path / "candidates.jsonl"
+    approved = tmp_path / "approved.txt"
+    approved.write_text("", encoding="utf-8")
+    pro = tmp_path / "pro.txt"
+    pro.write_text("", encoding="utf-8")
+    body = tmp_path / "body.md"
+
+    def proposals(value: dict[str, object]) -> list[str]:
+        ledger.write_text(json.dumps(value) + "\n", encoding="utf-8")
+        approved.write_text("", encoding="utf-8")
+        return propose_sites(
+            ledger, approved, pro, tmp_path / "whitelist.txt",
+            tmp_path / "exceptions.txt", body,
+        )
+
+    assert proposals(entry()) == [host]
+    assert proposals(entry(family=0)) == []
+    assert proposals(entry(titles=1)) == []
+    assert proposals(entry(reviewed=False)) == []
+    assert proposals(entry(path="none")) == []
+    assert proposals(entry(method="unverified-lead")) == []
+
+    spoofed = entry()
+    spoofed["onsite_content_urls"] = [
+        f"https://other.example.org/manga/alpha/chapter-1",
+        f"https://other.example.org/manga/beta/chapter-2",
+    ]
+    assert proposals(spoofed) == []

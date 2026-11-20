@@ -33,6 +33,10 @@ from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
 from ace_anime_discovery.anime_browser import BrowserRenderer
+from ace_anime_discovery.anime_content_verification import (
+    ContentVerificationResult,
+    verify_content_page,
+)
 from ace_anime_discovery.anime_crawl_policy import public_crawl_url
 from ace_anime_discovery.anime_diagnostics import source_group
 from ace_anime_discovery.anime_run_report import RunReport
@@ -299,6 +303,23 @@ class CrawlPage:
     kind: str
 
 
+_DISCOVERY_SOURCE_CLASSES = (
+    "catalog", "brave-search", "joined-candidate", "outbound", "other",
+)
+
+
+def _scheduler_source_class(source: str) -> str:
+    if source == "catalog":
+        return "catalog"
+    if source == "joined-candidate":
+        return "joined-candidate"
+    if source.startswith("brave-search:"):
+        return "brave-search"
+    if source.startswith("outbound:"):
+        return "outbound"
+    return "other"
+
+
 class Frontier:
     """All state mutations happen on the parent thread and are committed early."""
 
@@ -389,7 +410,7 @@ class Frontier:
         policy = cast(tuple[int] | None, self.conn.execute(
             "SELECT value FROM run_state WHERE key='site_evidence_policy_version'"
         ).fetchone())
-        if policy is None or policy[0] < 3:
+        if policy is None or policy[0] < 4:
             with self.conn:
                 stale = self.conn.execute(
                     "DELETE FROM evidence WHERE repository IN ('site-homepage','site-internal-page')"
@@ -401,14 +422,183 @@ class Frontier:
                     (time.time(),),
                 )
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO run_state(key,value) VALUES('site_evidence_policy_version',3)"
+                    "INSERT OR REPLACE INTO run_state(key,value) VALUES('site_evidence_policy_version',4)"
                 )
             logger.info("crawl migration: invalidated %d stale site observations", stale)
         self.conn.execute("CREATE TEMP TABLE exhausted_hosts(host TEXT PRIMARY KEY)")
+        self.conn.execute("CREATE TEMP TABLE claimed_batch(host TEXT PRIMARY KEY)")
         self._claimed_per_host: Counter[str] = Counter()
-        self._claim_calls: int = 0
-        self.conn.execute("UPDATE frontier SET status='pending' WHERE status='inflight'")
+        recovered = self.conn.execute(
+            "UPDATE frontier SET status='pending' WHERE status='inflight'"
+        ).rowcount
+        self._init_scheduler()
+        if recovered:
+            # Interrupted requests must not be skipped by persisted keyset
+            # cursors that advanced before those pages were completed.
+            self.conn.execute(
+                "UPDATE frontier_scheduler_cursor SET last_host='',last_due=0"
+            )
+            self.conn.execute(
+                "DELETE FROM run_state WHERE key='frontier_scheduler_turn'"
+            )
         self.conn.commit()
+
+    def _init_scheduler(self) -> None:
+        """Maintain indexed queue heads per host and crawl stage."""
+        column_rows = cast(list[tuple[int, str, str, int, object, int, int]],
+                           self.conn.execute(
+                               "PRAGMA table_xinfo(frontier)"
+                           ).fetchall())
+        columns = {row[1] for row in column_rows}
+        if "schedule_lane" not in columns:
+            self.conn.execute("""
+                ALTER TABLE frontier ADD COLUMN schedule_lane INTEGER
+                GENERATED ALWAYS AS (
+                    CASE WHEN kind='directory' THEN 2
+                         WHEN url='https://' || host || '/' THEN 0
+                         ELSE 1 END
+                ) VIRTUAL
+            """)
+        self.conn.executescript("""
+            CREATE INDEX IF NOT EXISTS frontier_scheduler_pending
+                ON frontier(host,status,schedule_lane,priority DESC,depth,url);
+            CREATE INDEX IF NOT EXISTS frontier_scheduler_first
+                ON frontier(status,schedule_lane,priority DESC,host,depth,url);
+            CREATE INDEX IF NOT EXISTS frontier_scheduler_due
+                ON frontier(host,next_check,url)
+                WHERE status IN ('done','failed','deferred') AND next_check > 0;
+            CREATE TABLE IF NOT EXISTS frontier_schedule (
+                lane INTEGER NOT NULL, host TEXT NOT NULL,
+                url TEXT NOT NULL, ready_at REAL NOT NULL,
+                source_class TEXT NOT NULL DEFAULT 'other',
+                PRIMARY KEY (lane,host)
+            );
+            CREATE INDEX IF NOT EXISTS frontier_schedule_due
+                ON frontier_schedule(lane,ready_at,host);
+            CREATE INDEX IF NOT EXISTS frontier_schedule_host
+                ON frontier_schedule(host);
+            CREATE TABLE IF NOT EXISTS frontier_scheduler_cursor (
+                lane INTEGER PRIMARY KEY,
+                last_host TEXT NOT NULL DEFAULT '',
+                last_due REAL NOT NULL DEFAULT 0
+            );
+        """)
+        head_columns = cast(list[tuple[int, str, str, int, object, int]],
+                            self.conn.execute(
+                                "PRAGMA table_info(frontier_schedule)"
+                            ).fetchall())
+        if "source_class" not in {row[1] for row in head_columns}:
+            self.conn.execute(
+                "ALTER TABLE frontier_schedule "
+                + "ADD COLUMN source_class TEXT NOT NULL DEFAULT 'other'"
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS frontier_schedule_class "
+            + "ON frontier_schedule(lane,source_class,host)"
+        )
+        # Stable buckets for the different discovery channels. A per-source
+        # keyset rotation prevents a large catalog batch from hiding joined
+        # or search leads behind one alphabetically ordered backlog.
+        source_sql = (
+            "CASE WHEN source='catalog' THEN 'catalog' "
+            + "WHEN source='joined-candidate' THEN 'joined-candidate' "
+            + "WHEN source LIKE 'brave-search:%' THEN 'brave-search' "
+            + "WHEN source LIKE 'outbound:%' THEN 'outbound' "
+            + "ELSE 'other' END"
+        )
+
+        def refresh(host: str) -> str:
+            # Host is the fixed trigger alias NEW or OLD.
+            statements = [f"DELETE FROM frontier_schedule WHERE host={host}.host;"]
+            for lane in (0, 1, 2):
+                statements.append(f"""
+                    INSERT INTO frontier_schedule(
+                        lane,host,url,ready_at,source_class
+                    )
+                    SELECT {lane},host,url,0,{source_sql} FROM frontier
+                    WHERE host={host}.host AND status='pending'
+                      AND schedule_lane={lane}
+                    ORDER BY priority DESC,depth,url LIMIT 1;
+                """)
+            statements.append(f"""
+                INSERT INTO frontier_schedule(
+                    lane,host,url,ready_at,source_class
+                )
+                SELECT 3,host,url,next_check,'recheck' FROM frontier
+                WHERE host={host}.host AND status IN ('done','failed','deferred')
+                  AND next_check > 0
+                ORDER BY next_check,url LIMIT 1;
+            """)
+            return "\n".join(statements)
+
+        self.conn.executescript(f"""
+            DROP TRIGGER IF EXISTS frontier_schedule_insert;
+            DROP TRIGGER IF EXISTS frontier_schedule_delete;
+            DROP TRIGGER IF EXISTS frontier_schedule_update;
+            DROP TRIGGER IF EXISTS frontier_schedule_rehost;
+            CREATE TRIGGER frontier_schedule_insert
+            AFTER INSERT ON frontier BEGIN
+                {refresh("NEW")}
+            END;
+            CREATE TRIGGER frontier_schedule_delete
+            AFTER DELETE ON frontier BEGIN
+                {refresh("OLD")}
+            END;
+            CREATE TRIGGER frontier_schedule_update
+            AFTER UPDATE OF url,host,kind,status,priority,depth,next_check
+            ON frontier WHEN NEW.host=OLD.host BEGIN
+                {refresh("NEW")}
+            END;
+            CREATE TRIGGER frontier_schedule_rehost
+            AFTER UPDATE OF url,host,kind,status,priority,depth,next_check
+            ON frontier WHEN NEW.host!=OLD.host BEGIN
+                {refresh("OLD")}
+                {refresh("NEW")}
+            END;
+        """)
+
+        version = cast(tuple[int] | None, self.conn.execute(
+            "SELECT value FROM run_state WHERE key='frontier_scheduler_version'"
+        ).fetchone())
+        if version is None or version[0] < 2:
+            # One-time cache migration; later startups retain the queue heads.
+            with self.conn:
+                self.conn.execute("DELETE FROM frontier_schedule")
+                self.conn.execute(f"""
+                    INSERT INTO frontier_schedule(
+                        lane,host,url,ready_at,source_class
+                    )
+                    SELECT lane,host,url,0,source_class FROM (
+                        SELECT schedule_lane AS lane,host,url,
+                            {source_sql} AS source_class,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY schedule_lane,host
+                                ORDER BY priority DESC,depth,url
+                            ) AS rank
+                        FROM frontier WHERE status='pending'
+                    ) WHERE rank=1
+                """)
+                self.conn.execute("""
+                    INSERT INTO frontier_schedule(
+                        lane,host,url,ready_at,source_class
+                    )
+                    SELECT 3,host,url,next_check,'recheck' FROM (
+                        SELECT host,url,next_check,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY host ORDER BY next_check,url
+                            ) AS rank
+                        FROM frontier
+                        WHERE status IN ('done','failed','deferred') AND next_check>0
+                    ) WHERE rank=1
+                """)
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO run_state(key,value) "
+                    + "VALUES('frontier_scheduler_version',2)"
+                )
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO frontier_scheduler_cursor(lane) VALUES(?)",
+            [(lane,) for lane in range(4)],
+        )
 
     def close(self) -> None:
         self.conn.commit()
@@ -475,54 +665,147 @@ class Frontier:
                 (host, url),
             )
 
+    def _next_scheduled_row(
+        self, lane: int, now: float, *, source_class: str | None = None,
+    ) -> tuple[str, str, int, str, str, float] | None:
+        """Seek the next eligible host (or due timestamp) using queue indexes."""
+        cursor = cast(tuple[str, float], self.conn.execute(
+            "SELECT last_host,last_due FROM frontier_scheduler_cursor WHERE lane=?",
+            (lane,),
+        ).fetchone())
+        if lane != 3 and not cursor[0] and source_class is None:
+            # Keep initial high-priority seeds first; subsequent picks rotate
+            # through hosts, so priority cannot starve lower-ranked hosts.
+            first = cast(tuple[str, str, int, str, str, float] | None,
+                         self.conn.execute("""
+                SELECT f.url,f.host,f.depth,f.source,f.kind,0.0
+                FROM frontier AS f
+                WHERE f.status='pending' AND f.schedule_lane=?
+                  AND NOT EXISTS(
+                      SELECT 1 FROM exhausted_hosts AS e WHERE e.host=f.host
+                  )
+                  AND NOT EXISTS(
+                      SELECT 1 FROM claimed_batch AS b WHERE b.host=f.host
+                  )
+                ORDER BY f.priority DESC,f.host,f.depth,f.url LIMIT 1
+            """, (lane,)).fetchone())
+            if first is not None:
+                return first
+
+        base = """
+            SELECT f.url,f.host,f.depth,f.source,f.kind,s.ready_at
+            FROM frontier_schedule AS s
+            JOIN frontier AS f ON f.url=s.url
+            WHERE s.lane=?
+              AND NOT EXISTS(
+                  SELECT 1 FROM exhausted_hosts AS e WHERE e.host=s.host
+              )
+              AND NOT EXISTS(
+                  SELECT 1 FROM claimed_batch AS b WHERE b.host=s.host
+              )
+        """
+        args_prefix: tuple[object, ...] = (lane,)
+        if source_class is not None:
+            base += " AND s.source_class=?"
+            args_prefix += (source_class,)
+        for after in (True, False):
+            if lane == 3:
+                suffix = " AND s.ready_at<=?"
+                args: tuple[object, ...] = args_prefix + (now,)
+                if after:
+                    suffix += " AND (s.ready_at,s.host)>(?,?)"
+                    args += (cursor[1], cursor[0])
+                suffix += " ORDER BY s.ready_at,s.host LIMIT 1"
+            else:
+                suffix = " AND s.host>?" if after else ""
+                args = args_prefix + (cursor[0],) if after else args_prefix
+                suffix += " ORDER BY s.host LIMIT 1"
+            row = cast(tuple[str, str, int, str, str, float] | None,
+                       self.conn.execute(base + suffix, args).fetchone())
+            if row is not None:
+                return row
+        return None
+
     def claim(self, limit: int, max_pages_domain: int) -> list[CrawlPage]:
-        """Fairly interleave new hosts and due rechecks, even at one worker."""
+        """Rotate four stages and host cursors without ranking the whole backlog."""
+        if limit <= 0 or max_pages_domain <= 0:
+            return []
         now = time.time()
-        self._claim_calls += 1
-        due_first = self._claim_calls % 4 == 0
-        rows = cast(list[tuple[str, str, int, str, str]], self.conn.execute("""
-            WITH ready AS (
-                SELECT url, host, depth, source, kind, priority, status,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY host
-                        ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END,
-                                 priority DESC, depth ASC, url ASC
-                    ) AS host_rank
-                FROM frontier
-                WHERE host NOT IN (SELECT host FROM exhausted_hosts)
-                  AND (status='pending'
-                   OR (status IN ('done','failed','deferred') AND
-                       next_check > 0 AND next_check <= ?))
-            ), balanced AS (
-                SELECT url, host, depth, source, kind, priority, status,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY CASE WHEN status='pending' THEN 0 ELSE 1 END
-                        ORDER BY priority DESC, depth ASC, url ASC
-                    ) AS class_rank
-                FROM ready WHERE host_rank=1
-            )
-            SELECT url, host, depth, source, kind FROM balanced
-            ORDER BY CASE WHEN status='pending'
-                          THEN (class_rank-1)/3 ELSE class_rank-1 END,
-                     CASE WHEN ? = 1
-                          THEN CASE WHEN status='pending' THEN 1 ELSE 0 END
-                          ELSE CASE WHEN status='pending' THEN 0 ELSE 1 END END,
-                     priority DESC, depth ASC, url ASC LIMIT ?
-        """, (now, int(due_first), max(100, limit * 10))).fetchall())
+        state = cast(tuple[int] | None, self.conn.execute(
+            "SELECT value FROM run_state WHERE key='frontier_scheduler_turn'"
+        ).fetchone())
+        turn = (state[0] if state else 0) % 4
         chosen: list[CrawlPage] = []
-        for url, host, depth, source, kind in rows:
-            chosen.append(CrawlPage(url, depth, source, kind))
-            self._claimed_per_host[host] += 1
-            if self._claimed_per_host[host] >= max_pages_domain:
+        source_state = cast(tuple[int] | None, self.conn.execute(
+            "SELECT value FROM run_state WHERE key='frontier_source_turn'"
+        ).fetchone())
+        source_turn = (source_state[0] if source_state else 0) % len(
+            _DISCOVERY_SOURCE_CLASSES
+        )
+        with self.conn:
+            self.conn.execute("DELETE FROM claimed_batch")
+            for _ in range(limit):
+                for offset in range(4):
+                    lane = (turn + offset) % 4
+                    if lane == 0:
+                        host_cursor = cast(tuple[str] | None, self.conn.execute(
+                            "SELECT last_host FROM frontier_scheduler_cursor WHERE lane=0"
+                        ).fetchone())
+                        if host_cursor is not None and not host_cursor[0]:
+                            # Preserve the highest-priority first homepage.
+                            candidate = self._next_scheduled_row(lane, now)
+                        else:
+                            candidate = None
+                            for source_offset in range(len(_DISCOVERY_SOURCE_CLASSES)):
+                                group = _DISCOVERY_SOURCE_CLASSES[
+                                    (source_turn + source_offset)
+                                    % len(_DISCOVERY_SOURCE_CLASSES)
+                                ]
+                                candidate = self._next_scheduled_row(
+                                    lane, now, source_class=group
+                                )
+                                if candidate is not None:
+                                    break
+                    else:
+                        candidate = self._next_scheduled_row(lane, now)
+                    if candidate is not None:
+                        break
+                else:
+                    break
+                url, host, depth, source, kind, due = candidate
+                chosen.append(CrawlPage(url, depth, source, kind))
                 self.conn.execute(
-                    "INSERT OR IGNORE INTO exhausted_hosts(host) VALUES(?)", (host,)
+                    "INSERT OR IGNORE INTO claimed_batch(host) VALUES(?)", (host,)
                 )
+                self._claimed_per_host[host] += 1
+                if self._claimed_per_host[host] >= max_pages_domain:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO exhausted_hosts(host) VALUES(?)", (host,)
+                    )
+                # Updating the frontier also updates its indexed host heads.
+                self.conn.execute(
+                    "UPDATE frontier SET status='inflight' WHERE url=?", (url,)
+                )
+                self.conn.execute(
+                    "UPDATE frontier_scheduler_cursor SET last_host=?,last_due=? "
+                    + "WHERE lane=?", (host, due, lane),
+                )
+                if lane == 0:
+                    source_class = _scheduler_source_class(source)
+                    source_turn = (
+                        _DISCOVERY_SOURCE_CLASSES.index(source_class) + 1
+                    ) % len(_DISCOVERY_SOURCE_CLASSES)
+                turn = (lane + 1) % 4
             self.conn.execute(
-                "UPDATE frontier SET status='inflight' WHERE url=?", (url,)
+                "INSERT INTO run_state(key,value) VALUES('frontier_scheduler_turn',?) "
+                + "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (turn,),
             )
-            if len(chosen) >= limit:
-                break
-        self.conn.commit()
+            self.conn.execute(
+                "INSERT INTO run_state(key,value) VALUES('frontier_source_turn',?) "
+                + "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (source_turn,),
+            )
         return chosen
 
     def complete(self, page: CrawlPage, error: str = "") -> None:
@@ -645,6 +928,7 @@ class InspectedPage:
     sitemap_paths: tuple[str, ...]
     error: str = ""
     needs_browser: bool = False
+    content_verification: ContentVerificationResult | None = None
 
 
 class WebCrawler:
@@ -673,6 +957,7 @@ class WebCrawler:
         self._run_homepage_fetched: set[str] = set()
         self._run_homepage_matched: set[str] = set()
         self._run_content_verified: set[str] = set()
+        self._homepage_categories: dict[str, tuple[str, ...]] = {}
         self._run_outcomes: Counter[str] = Counter()
         self._http_lock: threading.Lock = threading.Lock()
         report_path = config.report_path or config.state_path.parent / "crawl-report.sqlite"
@@ -946,6 +1231,14 @@ class WebCrawler:
             if "html" not in response.content_type.lower():
                 return InspectedPage(page, "", (), (), (), (), "not HTML")
             text = response.body.decode("utf-8", "replace")
+            verification = (
+                verify_content_page(
+                    text, page.url,
+                    homepage_categories=self._homepage_categories.get(host, ()),
+                )
+                if page.url != f"https://{host}/" and page.kind != "directory"
+                else None
+            )
             parser = SitePage()
             parser.feed(text)
             categories = site_categories(parser.topic_text)
@@ -990,7 +1283,8 @@ class WebCrawler:
                         pass
             return InspectedPage(page, parser.title, categories, _languages(parser.language),
                                  links, tuple(paths), needs_browser=not categories and page.depth == 0
-                                 and page.kind != "directory")
+                                 and page.kind != "directory",
+                                 content_verification=verification)
         except (OSError, ValueError, RuntimeError, http.client.HTTPException,
                 ssl.SSLError) as error:
             return InspectedPage(page, "", (), (), (), (),
@@ -1055,29 +1349,52 @@ class WebCrawler:
             self._run_homepage_fetched.add(host)
             if categories:
                 self._run_homepage_matched.add(host)
-        structured_content = (not is_homepage and content_page_path(urlsplit(page.url).path)
-                              and len(title.strip()) >= 8
-                              and not EMPTY_PAGE_TITLE.search(title.strip()))
+                self._homepage_categories[host] = categories
+            else:
+                self._homepage_categories.pop(host, None)
+        verification = data.content_verification
+        structured_content = bool(
+            not is_homepage and page.kind != "directory"
+            and verification is not None and verification.verified
+        )
+        if structured_content and verification is not None:
+            title = verification.title or title
+            categories = verification.categories
+            method = "verified-content-page"
+            self._run_content_verified.add(host)
+        elif not is_homepage:
+            # Incidental topical titles or generic HTML routes cannot create
+            # site-internal-page evidence or trigger outbound discovery.
+            categories = ()
         outcome = ("homepage_topical" if is_homepage and categories else
                    "homepage_unverified" if is_homepage else
                    "content_verified" if structured_content else "content_checked")
         self._run_outcomes[outcome] += 1
+        def signal_codes(values: tuple[str, ...]) -> tuple[str, ...]:
+            return tuple("CONTENT_" + code.upper() + "_V1" for code in values)
         self.report.record_page(
             host, source_group(page.source), page_type, outcome,
+            reason_codes=signal_codes(verification.codes) if verification else (),
+            positive_signals=(
+                signal_codes(verification.positive_signals) if verification else
+                ("HOMEPAGE_TOPIC_MATCH_V1",) if is_homepage and categories else ()
+            ),
+            negative_signals=(
+                signal_codes(verification.negative_signals) if verification else
+                ("HOMEPAGE_NO_TOPIC_V1",) if is_homepage else ()
+            ),
         )
-        if page.kind != "directory" and safe_hostname(host) and (categories or structured_content):
-            if structured_content:
-                self._run_content_verified.add(host)
+        if page.kind != "directory" and safe_hostname(host) and (
+                (is_homepage and categories) or structured_content):
             if categories:
                 logger.debug("crawl matched: host=%s categories=%s method=%s",
                             host, ",".join(categories), method)
-            # Internal topical pages are supporting evidence, not homepage votes.
+            # A content route is evidence only after structural verification.
             repository = "site-homepage" if is_homepage else "site-internal-page"
             for category in categories or ("unknown",):
                 self.frontier.evidence(Evidence(
                     host, title or None, category, languages, repository, None,
-                    "web-lead", method if categories else "structured-content-page",
-                    origin=page.url,
+                    "web-lead", method, origin=page.url,
                 ))
         for loc in data.sitemap_paths:
             self.frontier.add(loc, depth=page.depth + 1,
